@@ -18,6 +18,20 @@ speed_index = 2
 
 imu_reader = IMUReader()
 
+# === List of navigation targets (latitude, longitude) ===
+TARGETS = [
+    (38.941245, -92.318573),
+    (38.940828, -92.318578),
+    (38.940809, -92.318160),
+    # Add more coordinates as needed
+]
+current_target_idx = 0
+
+def get_current_target():
+    if current_target_idx < len(TARGETS):
+        return TARGETS[current_target_idx]
+    return None, None
+
 # ======================
 # Simulated GPS and IMU interfaces
 # ======================
@@ -65,7 +79,7 @@ def angle_diff_deg(bearing, yaw):
 # Autonomous navigation task
 # ======================
 async def nav_task(ws):
-    global mode
+    global mode, current_target_idx, TARGET_LAT, TARGET_LON
     while True:
         if mode != "auto":
             await asyncio.sleep(0.1)
@@ -86,6 +100,13 @@ async def nav_task(ws):
             await asyncio.sleep(1)
             continue
 
+        # Get current target
+        TARGET_LAT, TARGET_LON = get_current_target()
+        if TARGET_LAT is None or TARGET_LON is None:
+            print("[AUTO] ✅ All targets reached. Stopping robot.")
+            await ws.send("s")  # Stop the robot
+            break
+
         dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
         bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
         if bearing > 180:
@@ -95,7 +116,15 @@ async def nav_task(ws):
         print(f"[AUTO] 📍 Lat={lat:.5f}, Lon={lon:.5f}, Dist={dist:.2f}m, Yaw={yaw:.2f}, bearing= {bearing:.2f}, Δ={diff:.2f}, Precision={precision:.2f}")
 
         if dist < 0.5:
-            cmd = "s"
+            print(f"[AUTO] 🎯 Target {current_target_idx+1} reached at ({TARGET_LAT}, {TARGET_LON})")
+            current_target_idx += 1
+            if current_target_idx >= len(TARGETS):
+                print("[AUTO] 🏁 Final target reached. Stopping robot.")
+                await ws.send("s")
+                break
+            await ws.send("s")  # Stop at each waypoint before proceeding
+            await asyncio.sleep(2)  # Pause before moving to next target
+            continue
         elif abs(diff) > 5:
             cmd = "d" if diff > 0 else "a"   # Normal fine-tuning
         else:

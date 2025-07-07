@@ -1,3 +1,3 @@
 #!/bin/bash
 
-python main_robot.py
+python3 main_robot.py

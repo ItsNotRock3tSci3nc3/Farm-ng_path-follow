@@ -5,3 +5,5 @@ pyserial
 websockets
 pynmea2
 pygame
+uvicorn
+fastapi
