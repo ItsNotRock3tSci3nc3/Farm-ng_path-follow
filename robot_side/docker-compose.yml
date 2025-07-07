@@ -1,0 +1,14 @@
+services:
+  robot_side:
+    build:
+      context: .
+    container_name: robot_side
+    working_dir: /app
+    command: bash
+    network_mode: host   # ⬅️ 使用宿主机网络，获得真实 IP
+    environment:
+      - DISPLAY=${DISPLAY}
+      # - FAKE_IMU=True
+    volumes:
+      - .:/app
+      - /tmp/.X11-unix:/tmp/.X11-unix

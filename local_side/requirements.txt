@@ -1,0 +1,7 @@
+opencv-python 
+numpy
+farm-ng-amiga
+pyserial
+websockets
+pynmea2
+pygame

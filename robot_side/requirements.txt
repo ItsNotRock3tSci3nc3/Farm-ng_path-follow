@@ -1,0 +1,6 @@
+depthai
+opencv-python 
+numpy
+pyserial
+websockets
+farm-ng-amiga

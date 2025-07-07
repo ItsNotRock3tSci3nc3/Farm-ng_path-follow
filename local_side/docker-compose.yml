@@ -1,0 +1,18 @@
+services:
+  local_side:
+    build:
+      context: .
+    container_name: local_side
+    working_dir: /app
+    network_mode: host
+    privileged: true
+    # command: bash
+    env_file: device.env
+    devices:
+      - ${ESP32_PORT}:${ESP32_PORT}
+      - ${RTK_PORT}:${RTK_PORT}
+    environment:
+      - DISPLAY=${DISPLAY}
+    volumes:
+      - .:/app
+      - /tmp/.X11-unix:/tmp/.X11-unix
