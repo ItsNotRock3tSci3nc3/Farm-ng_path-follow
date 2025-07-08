@@ -10,17 +10,17 @@ from farm_ng.core.events_file_reader import proto_from_json_file
 import websockets
 
 # -------------------------------
-# 控制速度档位设置
+# Speed level settings
 # -------------------------------
-SPEED_LEVELS = [0.2, 0.4, 0.6, 0.8, 0.9, 1.0]  # 速度百分比
+SPEED_LEVELS = [0.2, 0.4, 0.6, 0.8, 0.9, 1.0]  # Speed percentage
 DEFAULT_SPEED_INDEX = 2
 current_speed_index = DEFAULT_SPEED_INDEX
 
 
 def update_twist_with_key(twist: Twist2d, key: str) -> Twist2d:
     """
-    接收字符指令，更新 Twist2d 控制信号。
-    支持 w/a/s/d 控制方向，1~6 切换速度，空格急停。
+    Receives character commands and updates the Twist2d control signal.
+    Supports w/a/s/d for direction control, 1~6 to switch speed, and spacebar for emergency stop.
     """
     global current_speed_index
 
@@ -89,8 +89,8 @@ async def start_server(service_config_path: Path, port: int):
 
     async def handle_connection(websocket):
         """
-        内嵌函数，访问外部 client。
-        接收控制字符，发送 Twist2d 到 CAN 总线。
+        Inner function, accesses outer client.
+        Receives control characters and sends Twist2d to the CAN bus.
         """
         print(f"✅ Connected from {websocket.remote_address}")
         twist = Twist2d()
@@ -99,7 +99,7 @@ async def start_server(service_config_path: Path, port: int):
             async for message in websocket:
                 twist = update_twist_with_key(twist, message)
                 print(f"📨 Received '{message}' → linear={twist.linear_velocity_x:.2f}, angular={twist.angular_velocity:.2f}")
-                await client.request_reply("/twist", twist)  # 发送到 CAN 总线 ！！ 测试时注释掉， 运行时取消注释
+                await client.request_reply("/twist", twist)  # Send to CAN bus !! Comment out for testing, uncomment for running
         except websockets.exceptions.ConnectionClosedError:
             print(f"❌ Connection closed from {websocket.remote_address}")
         except Exception as e:
