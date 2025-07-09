@@ -89,11 +89,7 @@ async def start_server(service_config_path: Path, port: int):
 
     async def handle_connection(websocket):
         """
-<<<<<<< HEAD
-        Inner function, accesses the external client.
-=======
         Inner function, accesses outer client.
->>>>>>> 0eb9588a2298829d28aa2aa8e11850729411f4ea
         Receives control characters and sends Twist2d to the CAN bus.
         """
         print(f"✅ Connected from {websocket.remote_address}")

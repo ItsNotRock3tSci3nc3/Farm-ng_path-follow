@@ -144,7 +144,7 @@ async def nav_task(ws):
         if dist < 0.5:
             print(f"[AUTO] 🎯 Reached waypoint {current_target_index + 1}")
             current_target_index += 1
-            await asyncio.sleep(1)
+            #await asyncio.sleep(1)
             continue
 
         # === Smart turning (dynamic turning speed) ===
