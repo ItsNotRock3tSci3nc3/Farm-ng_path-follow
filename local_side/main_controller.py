@@ -8,6 +8,10 @@ import time
 from gps_reader import get_latest_fix 
 from imu_bno085_receiver import IMUReader
 
+from kalman import KalmanFilter2D
+
+kf = KalmanFilter2D()
+
 # === Navigation target point ===
 TARGET_LAT = 38.94123854
 TARGET_LON = -92.31853863600745
@@ -25,46 +29,10 @@ imu_reader = IMUReader()
 #TARGETS = [(38.90764031, -92.26851491),(38.90768574, -92.26833880),(38.90775425, -92.26808159),(38.90780484, -92.26789371)]
 # out
 TARGETS = [
-(38.90763367,-92.26851091),
-(38.90763546,-92.26850523),
-(38.90763791,-92.26849781),
-(38.90763924,-92.26849308),
-(38.90763925,-92.26849311),
-(38.90763929,-92.26849298),
-(38.90764068,-92.26848867),
-(38.90764370,-92.26847903),
-(38.90764633,-92.26846686),
-(38.90764823,-92.26845158),
-(38.90765200,-92.26843730),
-(38.90765592,-92.26842193),
-(38.90766055,-92.26840502),
-(38.90766492,-92.26838928),
-(38.90766871,-92.26837267),
-(38.90767347,-92.26835599),
-(38.90767810,-92.26833882),
-(38.90768209,-92.26832337),
-(38.90768691,-92.26830648),
-(38.90769060,-92.26829082),
-(38.90769497,-92.26827411),
-(38.90769944,-92.26825842),
-(38.90770364,-92.26824268),
-(38.90770816,-92.26822651),
-(38.90771302,-92.26820915),
-(38.90771661,-92.26819415),
-(38.90772092,-92.26817839),
-(38.90772532,-92.26816184),
-(38.90772889,-92.26814607),
-(38.90773290,-92.26813014),
-(38.90773762,-92.26811333),
-(38.90774202,-92.26809619),
-(38.90774646,-92.26808006),
-(38.90775080,-92.26806321),
-(38.90775572,-92.26804566),
-(38.90776001,-92.26803034),
-(38.90776452,-92.26801363),
-(38.90776891,-92.26799773),
-(38.90777291,-92.26798168),
-(38.90777731,-92.26796545)
+(38.9425477, -92.3197040),
+(38.9425531, -92.3199857),
+(38.9425558, -92.3204111),
+(38.9425632, -92.3210972)
 ]
 current_target_idx = 0
 
@@ -116,6 +84,16 @@ def bearing_deg(lat1, lon1, lat2, lon2):
 def angle_diff_deg(bearing, yaw):
     return (bearing + yaw)
 
+def get_filtered_gps():
+    pos = _get_latest_fix()
+    if pos is None:
+        return None
+    lat, lon = pos["lat"], pos["lon"]
+    filtered_lat, filtered_lon = kf.update(lat, lon)
+    pos["lat"] = filtered_lat
+    pos["lon"] = filtered_lon
+    return pos
+
 # ======================
 # Autonomous navigation task
 # ======================
@@ -132,22 +110,23 @@ async def nav_task(ws):
             continue
 
         if current_target_index >= len(WAYPOINTS):
-            print("[AUTO] ✅ 所有目标点已完成，自动切换为手动模式。")
+            print("[AUTO] ✅ All waypoints completed, automatically switching to manual mode.")
             mode = "manual"
             continue
 
-        pos = _get_latest_fix()
+        #pos = _get_latest_fix()
+        pos = get_filtered_gps() #filtered GPS data
         yaw = _get_yaw()
 
-        print("[AUTO] 🛰️ 获取最新 GPS 和 IMU 数据...")
+        print("[AUTO] 🛰️ Getting latest GPS and IMU data...")
         lat, lon, precision = pos["lat"], pos["lon"], pos["precision"]
 
         if precision > 2 or math.isnan(precision):
-            print(f"[AUTO] ⚠️ GPS 精度较差: {precision:.2f}m")
+            print(f"[AUTO] ⚠️ Poor GPS precision: {precision:.2f}m")
             await asyncio.sleep(1)
             continue
         if yaw is None:
-            print("[AUTO] ⚠️ IMU yaw 获取失败，重试中...")
+            print("[AUTO] ⚠️ IMU yaw acquisition failed, retrying...")
             await asyncio.sleep(1)
             continue
 
@@ -163,22 +142,22 @@ async def nav_task(ws):
               f"bearing={bearing:.2f}, Δ={diff:.2f}, Precision={precision:.2f}")
 
         if dist < 0.5:
-            print(f"[AUTO] 🎯 已到达目标点 {current_target_index + 1}")
+            print(f"[AUTO] 🎯 Reached waypoint {current_target_index + 1}")
             current_target_index += 1
             await asyncio.sleep(1)
             continue
 
-        # === 智能转向（动态转向速度） ===
-        if abs(diff) > 5:  # 夹角大于5度才转向
+        # === Smart turning (dynamic turning speed) ===
+        if abs(diff) > 5:  # Only turn if the angle difference is greater than 5 degrees
             cmd = "d" if diff > 0 else "a"
 
-            # 将角度误差转为转向速度，范围 [0.1, 0.9]
+            # Convert angle error to turning speed, range [0.1, 0.9]
             abs_diff = abs(diff)
             turn_speed = min(max(abs_diff / 90.0, 0.1), 0.9)
 
             # turn_speed = map_angle_to_speed(diff)
 
-            print(f"[AUTO] 🔄 角度误差 {abs_diff:.2f}° → 转向速度 {turn_speed:.2f} + 指令 {cmd}")
+            print(f"[AUTO] 🔄 Angle error {abs_diff:.2f}° → Turning speed {turn_speed:.2f} + Command {cmd}")
             await ws.send(f"{turn_speed:.2f}")
         else:
             cmd = "w"
@@ -199,8 +178,6 @@ async def keyboard_task(ws):
     pressed_keys = set()
 
     clock = pygame.time.Clock()
-
-
 
     while True:
         for event in pygame.event.get():
@@ -231,7 +208,6 @@ async def keyboard_task(ws):
             await asyncio.sleep(0.01)
             continue
 
-
         pos = _get_latest_fix()
         yaw = _get_yaw()
         lat, lon, precision = pos["lat"], pos["lon"], pos["precision"]
@@ -242,8 +218,6 @@ async def keyboard_task(ws):
         diff = angle_diff_deg(bearing, yaw)
         print(f"[MANUAL] 📍 Lat={lat:.8f}, Lon={lon:.8f}, Dist={dist:.2f}m, Yaw={yaw:.2f}, bearing= {bearing:.2f}, Δ={diff:.2f}, Precision={precision:.2f}")
         
-        
-	
         # === Handle direction combinations ===
         if pressed_keys:
             commands = []
@@ -263,6 +237,19 @@ async def keyboard_task(ws):
         await asyncio.sleep(0.1)  # Control sending frequency (10Hz)
         clock.tick(60)
 
+# ======================
+# KML Logging task
+# ======================
+async def kml_logging_task(get_pos_func, kml_logger):
+    try:
+        while True:
+            pos = get_pos_func()
+            if pos is not None:
+                lat, lon = pos["lat"], pos["lon"]
+                kml_logger.add_point(lon, lat)
+            await asyncio.sleep(3)
+    finally:
+        kml_logger.close()
 
 # ======================
 # Main entry
@@ -277,4 +264,10 @@ async def main():
         )
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main(), kml_logging_task())
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        print("Running without kml logging")
+        asyncio.run(main())
