@@ -19,7 +19,7 @@ rtk_port = find_device_by_manufacturer("Emlid")
 print(f"ESP32: {esp32_port or 'Not found'}")
 print(f"RTK  : {rtk_port or 'Not found'}")
 
-# 保存为 env 文件（供 Docker Compose 使用）
+# Save as env file (for Docker Compose usage)
 with open("device.env", "w") as f:
     if esp32_port:
         f.write(f"ESP32_PORT={esp32_port}\n")

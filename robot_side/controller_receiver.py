@@ -89,8 +89,8 @@ async def start_server(service_config_path: Path, port: int):
 
     async def handle_connection(websocket):
         """
-        内嵌函数，访问外部 client。
-        接收控制字符，发送 Twist2d 到 CAN 总线。
+        Inner function, accesses the external client.
+        Receives control characters and sends Twist2d to the CAN bus.
         """
         print(f"✅ Connected from {websocket.remote_address}")
         twist = Twist2d()
@@ -99,7 +99,7 @@ async def start_server(service_config_path: Path, port: int):
             async for message in websocket:
                 twist = update_twist_with_key(twist, message)
                 print(f"📨 Received '{message}' → linear={twist.linear_velocity_x:.2f}, angular={twist.angular_velocity:.2f}")
-                await client.request_reply("/twist", twist)  # 发送到 CAN 总线 ！！ 测试时注释掉， 运行时取消注释
+                await client.request_reply("/twist", twist)  # Send to CAN bus !! Comment out for testing, uncomment for running
         except websockets.exceptions.ConnectionClosedError:
             print(f"❌ Connection closed from {websocket.remote_address}")
         except Exception as e:

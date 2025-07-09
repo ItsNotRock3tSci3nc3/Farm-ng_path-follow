@@ -25,18 +25,18 @@ def estimate_precision_cm(hdop, gps_qual):
 
 def get_latest_fix(debug=False):
     """
-    读取一次串口数据，返回经纬度 + 精度 + debug信息:
+    Read serial data once and return latitude, longitude, precision, and debug info:
     {
         'lat': float,
         'lon': float,
         'precision': float,
-        'debug': { ... }  # 包含全部字段
+        'debug': { ... }  # contains all fields
     }
     """
     try:
         ser = serial.Serial(SERIAL_PORT, baudrate=BAUDRATE, timeout=1)
     except Exception as e:
-        print(f"无法打开串口: {e}")
+        print(f"Unable to open serial port: {e}")
         return None
 
     while True:
@@ -74,7 +74,7 @@ def get_latest_fix(debug=False):
                 }
 
                 if debug:
-                    print("==== GGA 原始调试信息 ====")
+                    print("==== GGA Raw Debug Info ====")
                     for k, v in result["debug"].items():
                         print(f"{k:<15}: {v}")
 
