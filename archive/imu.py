@@ -3,7 +3,7 @@ import math
 
 
 def quaternion_to_euler_deg(i, j, k, real):
-    """四元数 -> 欧拉角（度）"""
+    """Quaternion -> Euler angles (degrees)"""
     x, y, z, w = i, j, k, real
 
     sinr_cosp = 2 * (w * x + y * z)

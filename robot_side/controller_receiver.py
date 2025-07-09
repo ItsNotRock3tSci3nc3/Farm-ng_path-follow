@@ -10,17 +10,17 @@ from farm_ng.core.events_file_reader import proto_from_json_file
 import websockets
 
 # -------------------------------
-# 控制速度档位设置
+# Speed level settings
 # -------------------------------
-SPEED_LEVELS = [0.2, 0.4, 0.6, 0.8, 0.9, 1.0]  # 速度百分比
+SPEED_LEVELS = [0.2, 0.4, 0.6, 0.8, 0.9, 1.0]  # Speed percentage
 DEFAULT_SPEED_INDEX = 2
 current_speed_index = DEFAULT_SPEED_INDEX
 
 
 def update_twist_with_key(twist: Twist2d, key: str) -> Twist2d:
     """
-    接收字符指令，更新 Twist2d 控制信号。
-    支持 w/a/s/d 控制方向，1~6 切换速度，空格急停。
+    Receives character commands and updates the Twist2d control signal.
+    Supports w/a/s/d for direction control, 1~6 to switch speed, and spacebar for emergency stop.
     """
     global current_speed_index
 
@@ -89,7 +89,11 @@ async def start_server(service_config_path: Path, port: int):
 
     async def handle_connection(websocket):
         """
+<<<<<<< HEAD
         Inner function, accesses the external client.
+=======
+        Inner function, accesses outer client.
+>>>>>>> 0eb9588a2298829d28aa2aa8e11850729411f4ea
         Receives control characters and sends Twist2d to the CAN bus.
         """
         print(f"✅ Connected from {websocket.remote_address}")
