@@ -8,6 +8,9 @@ import time
 from gps_reader import get_latest_fix 
 from imu_bno085_receiver import IMUReader
 
+from CSVLogger import CSVLogger
+csv_logger = CSVLogger("robot_track.csv")
+
 from kalman import KalmanFilter2D
 
 kf = KalmanFilter2D()
@@ -15,6 +18,9 @@ kf = KalmanFilter2D()
 # === Navigation target point ===
 TARGET_LAT = 38.94123854
 TARGET_LON = -92.31853863600745
+
+# === Coordinate buffer radius ===
+WAYPOINT_RADIUS = 2.0  # meters (adjust as needed)
 
 # === Mode and speed levels ===
 mode = "manual" # "manual" or "auto"
@@ -28,11 +34,19 @@ imu_reader = IMUReader()
 # come way
 #TARGETS = [(38.90764031, -92.26851491),(38.90768574, -92.26833880),(38.90775425, -92.26808159),(38.90780484, -92.26789371)]
 # out
+"""
 TARGETS = [
-(38.9425477, -92.3197040),
-(38.9425531, -92.3199857),
-(38.9425558, -92.3204111),
-(38.9425632, -92.3210972)
+(38.94253063, -92.31954402),
+(38.94253614, -92.31965974),
+(38.94253921, -92.31999613),
+(38.94253776, -92.32057431)
+]
+"""
+
+
+TARGETS = [
+(38.94253063, -92.31954402),
+(38.94253776, -92.32057431)
 ]
 current_target_idx = 0
 
@@ -99,23 +113,22 @@ def get_filtered_gps():
 # ======================
 def map_angle_to_speed(diff_deg):
     abs_diff = min(abs(diff_deg), 90.0)
-    speed = 0.1 + 0.8 * (abs_diff / 90.0) ** 1.5
+    speed = 0.1 + 0.8 * (abs_diff / 90.0) ** 1.5 
     return round(min(speed, 0.9), 2)
 
 async def nav_task(ws):
-    global mode, current_target_index
+    global mode, current_target_idx
     while True:
         if mode != "auto":
             await asyncio.sleep(0.1)
             continue
 
-        if current_target_index >= len(WAYPOINTS):
+        if current_target_idx >= len(TARGETS):
             print("[AUTO] ✅ All waypoints completed, automatically switching to manual mode.")
             mode = "manual"
             continue
 
-        #pos = _get_latest_fix()
-        pos = get_filtered_gps() #filtered GPS data
+        pos = get_filtered_gps()
         yaw = _get_yaw()
 
         print("[AUTO] 🛰️ Getting latest GPS and IMU data...")
@@ -130,39 +143,38 @@ async def nav_task(ws):
             await asyncio.sleep(1)
             continue
 
-        target_lat, target_lon = WAYPOINTS[current_target_index]
+        target_lat, target_lon = TARGETS[current_target_idx]
         dist = haversine_distance(lat, lon, target_lat, target_lon)
         bearing = bearing_deg(lat, lon, target_lat, target_lon)
         if bearing > 180:
             bearing -= 360
         diff = angle_diff_deg(bearing, yaw)
 
-        print(f"[AUTO] 📍 Waypoint {current_target_index+1}/{len(WAYPOINTS)} | "
+        print(f"[AUTO] 📍 Waypoint {current_target_idx+1}/{len(TARGETS)} | "
               f"Lat={lat:.8f}, Lon={lon:.8f}, Dist={dist:.2f}m, Yaw={yaw:.2f}, "
               f"bearing={bearing:.2f}, Δ={diff:.2f}, Precision={precision:.2f}")
 
-        if dist < 0.5:
-            print(f"[AUTO] 🎯 Reached waypoint {current_target_index + 1}")
-            current_target_index += 1
-            #await asyncio.sleep(1)
+        if dist < WAYPOINT_RADIUS:
+            print(f"[AUTO] 🎯 Reached waypoint {current_target_idx + 1} within {WAYPOINT_RADIUS:.2f}m buffer")
+            current_target_idx += 1
             continue
 
         # === Smart turning (dynamic turning speed) ===
-        if abs(diff) > 5:  # Only turn if the angle difference is greater than 5 degrees
+        base_speed = SPEED_LEVELS[speed_index]
+
+        if abs(diff) > 3:
             cmd = "d" if diff > 0 else "a"
-
-            # Convert angle error to turning speed, range [0.1, 0.9]
-            abs_diff = abs(diff)
-            turn_speed = min(max(abs_diff / 90.0, 0.1), 0.9)
-
-            # turn_speed = map_angle_to_speed(diff)
-
-            print(f"[AUTO] 🔄 Angle error {abs_diff:.2f}° → Turning speed {turn_speed:.2f} + Command {cmd}")
-            await ws.send(f"{turn_speed:.2f}")
+            # Slow turning — reduce speed while turning
+            turn_speed = max(0.1, base_speed * 0.4)
+            print(f"[AUTO] 🔄 Turning | Δ={abs(diff):.2f}° | Turn Speed={turn_speed:.2f} | Command={cmd}")
+            await ws.send(f"{turn_speed:.2f}")  # Send speed
+            await ws.send(cmd)                  # Send turn direction
         else:
             cmd = "w"
+            print(f"[AUTO] 🚀 Moving forward at speed {base_speed:.2f}")
+            await ws.send(f"{base_speed:.2f}")  # Send speed
+            await ws.send(cmd)                  # Send move command
 
-        await ws.send(cmd)
         await asyncio.sleep(0.5)
 
 # ======================
@@ -238,18 +250,18 @@ async def keyboard_task(ws):
         clock.tick(60)
 
 # ======================
-# KML Logging task
+# CSV Logging task
 # ======================
-async def kml_logging_task(get_pos_func, kml_logger):
+async def csv_logging_task(get_pos_func, csv_logger):
     try:
         while True:
             pos = get_pos_func()
             if pos is not None:
                 lat, lon = pos["lat"], pos["lon"]
-                kml_logger.add_point(lon, lat)
+                csv_logger.add_point(lon, lat)
             await asyncio.sleep(3)
     finally:
-        kml_logger.close()
+        csv_logger.close()
 
 # ======================
 # Main entry
@@ -260,14 +272,12 @@ async def main():
     async with websockets.connect(uri) as ws:
         await asyncio.gather(
             nav_task(ws),
-            keyboard_task(ws)
+            keyboard_task(ws),
+            csv_logging_task(get_filtered_gps, csv_logger)
         )
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main(), kml_logging_task())
+        asyncio.run(main())
     except Exception as e:
         print(f"Error: {e}")
-    finally:
-        print("Running without kml logging")
-        asyncio.run(main())
