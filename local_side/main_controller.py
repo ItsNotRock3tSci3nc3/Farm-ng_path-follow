@@ -9,17 +9,20 @@ from gps_reader import get_latest_fix
 from imu_bno085_receiver import IMUReader
 
 from CSVLogger import CSVLogger
-csv_logger = CSVLogger("robot_track_buffer_filter_run3.csv") #CHANGE BEFORE TESTING
+csv_logger = CSVLogger("robot_track_kalman_buffer_yawAcc.csv") #CHANGE BEFORE TESTING
 
 from kalman import KalmanFilter2D
 kf = KalmanFilter2D()
+
+from yaw_filter import YawFilter
+yaw_filter = YawFilter(alpha=0.7)  # Adjust alpha as needed
 
 # === Navigation target point ===
 TARGET_LAT = 38.94123854
 TARGET_LON = -92.31853863600745
 
 # === Coordinate buffer radius ===
-WAYPOINT_RADIUS = 2.0  # meters (adjust as needed)
+WAYPOINT_RADIUS = 2.5  # meters (adjust as needed)
 
 # === Mode and speed levels ===
 mode = "manual" # "manual" or "auto"
@@ -74,9 +77,17 @@ def _get_latest_fix():
 
 
 def _get_yaw():
-    # TODO: Replace with real IMU module
-    # return 45.0  # Assume heading 45°
-    return imu_reader.get_yaw()  # Get heading angle from IMU interface
+    raw_yaw = imu_reader.get_yaw()
+    yaw_accuracy = imu_reader.get_accuracy()
+    
+    # Discard if yaw accuracy is poor
+    if yaw_accuracy < 2:
+        print(f"[IMU] ⚠️ Yaw accuracy too low ({yaw_accuracy:.2f}), discarding yaw")
+        return yaw_filter.filtered_yaw  # Return last valid filtered yaw
+
+    return yaw_filter.update(raw_yaw, yaw_accuracy)
+def _get_yaw_accuracy():
+    return imu_reader.get_accuracy()  # Get accuracy from IMU interface
 
 # ======================
 # Heading/distance calculation utilities
@@ -97,7 +108,12 @@ def bearing_deg(lat1, lon1, lat2, lon2):
     return (math.degrees(math.atan2(y, x)) + 360) % 360
 
 def angle_diff_deg(bearing, yaw):
-    return (bearing + yaw)
+    diff = bearing - yaw
+    while diff < -180:
+        diff += 360
+    while diff > 180:
+        diff -= 360
+    return diff
 
 def get_filtered_gps():
     pos = _get_latest_fix()
@@ -133,6 +149,7 @@ async def nav_task(ws):
 
         pos = get_filtered_gps() #kalman
         yaw = _get_yaw()
+        yaw_acc = _get_yaw_accuracy()
 
         print("[AUTO] 🛰️ Getting latest GPS and IMU data...")
         lat, lon, precision = pos["lat"], pos["lon"], pos["precision"]
@@ -151,10 +168,14 @@ async def nav_task(ws):
         bearing = bearing_deg(lat, lon, target_lat, target_lon)
         if bearing > 180:
             bearing -= 360
+        if yaw is None:
+            print("[AUTO] ⚠️ Yaw is None due to low accuracy. Skipping update.")
+            await asyncio.sleep(1)
+            continue
         diff = angle_diff_deg(bearing, yaw)
 
         print(f"[AUTO] 📍 Waypoint {current_target_idx+1}/{len(TARGETS)} | "
-              f"Lat={lat:.8f}, Lon={lon:.8f}, Dist={dist:.2f}m, Yaw={yaw:.2f}, "
+              f"Lat={lat:.8f}, Lon={lon:.8f}, Dist={dist:.2f}m, Yaw={yaw:.2f}, Yaw Accuracy={yaw_acc:.2f}, "
               f"bearing={bearing:.2f}, Δ={diff:.2f}, Precision={precision:.2f}")
 
         if dist < WAYPOINT_RADIUS: #0.5 was original, prior to WAYPOINT_RADIUS. Using for baseline. Buffer radius
@@ -165,10 +186,10 @@ async def nav_task(ws):
         # === Smart turning (dynamic turning speed) ===
         base_speed = SPEED_LEVELS[speed_index]
 
-        if abs(diff) > 3:
+        if abs(diff) > 5:
             cmd = "d" if diff > 0 else "a"
             # Slow turning — reduce speed while turning
-            turn_speed = max(0.1, base_speed * 0.4)
+            turn_speed = max(0.1, base_speed * 0.3)
             print(f"[AUTO] 🔄 Turning | Δ={abs(diff):.2f}° | Turn Speed={turn_speed:.2f} | Command={cmd}")
             await ws.send(f"{turn_speed:.2f}")  # Send speed
             await ws.send(cmd)                  # Send turn direction
@@ -225,13 +246,18 @@ async def keyboard_task(ws):
 
         pos = get_filtered_gps()
         yaw = _get_yaw()
+        yaw_acc = _get_yaw_accuracy()
         lat, lon, precision = pos["lat"], pos["lon"], pos["precision"]
         dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
         bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
         if bearing > 180:
             bearing -= 360
+        if yaw is None:
+            print("[AUTO] ⚠️ Yaw is None due to low accuracy. Skipping update.")
+            await asyncio.sleep(1)
+            continue
         diff = angle_diff_deg(bearing, yaw)
-        print(f"[MANUAL] 📍 Lat={lat:.8f}, Lon={lon:.8f}, Dist={dist:.2f}m, Yaw={yaw:.2f}, bearing= {bearing:.2f}, Δ={diff:.2f}, Precision={precision:.2f}")
+        print(f"[MANUAL] 📍 Lat={lat:.8f}, Lon={lon:.8f}, Dist={dist:.2f}m, Yaw={yaw:.2f}, Yaw precision = {yaw_acc:.2f}, bearing= {bearing:.2f}, Δ={diff:.2f}, Precision={precision:.2f}")
         
         # === Handle direction combinations ===
         if pressed_keys:
@@ -263,16 +289,20 @@ async def csv_logging_task(get_pos_func, get_yaw, csv_logger):
             if pos is not None and yaw is not None:
                 lat, lon = pos["lat"], pos["lon"]
                 yaw = yaw
+                yaw_acc = _get_yaw_accuracy()
                 dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
                 bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
+                if yaw is None:
+                    print("[AUTO] ⚠️ Yaw is None due to low accuracy. Skipping update.")
+                    await asyncio.sleep(1)
+                    continue
                 diff = angle_diff_deg(bearing, yaw)
                 precision = pos.get("precision", 0.0)
                 bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
                 if bearing > 180:
                     bearing -= 360
-                diff = angle_diff_deg(bearing, yaw)
 
-                csv_logger.add_point(dist, lon, lat, yaw, bearing, diff, precision)
+                csv_logger.add_point(dist, lon, lat, yaw, yaw_acc, bearing, diff, precision)
             await asyncio.sleep(3)
     finally:
         csv_logger.close()

@@ -23,21 +23,26 @@ class IMUReader:
                 line = self.ser.readline().decode().strip()
                 if not line:
                     continue
-                r, p, y = map(float, line.split(","))
+                r, p, y, acc = map(float, line.split(","))
                 with self.lock:
                     self.roll = r
                     self.pitch = p
                     self.yaw = y
+                    self.accuracy = acc
             except Exception as e:
                 print("[IMUReader] Parse error:", e)
 
     def get_yaw(self):
         with self.lock:
             return self.yaw
+        
+    def get_accuracy(self):
+        with self.lock:
+            return self.accuracy
 
     def get_all(self):
         with self.lock:
-            return self.roll, self.pitch, self.yaw
+            return self.roll, self.pitch, self.yaw, self.accuracy
 
     def stop(self):
         self.running = False
