@@ -9,10 +9,9 @@ from gps_reader import get_latest_fix
 from imu_bno085_receiver import IMUReader
 
 from CSVLogger import CSVLogger
-csv_logger = CSVLogger("robot_track.csv")
+csv_logger = CSVLogger("robot_track_buffer_filter_run3.csv") #CHANGE BEFORE TESTING
 
 from kalman import KalmanFilter2D
-
 kf = KalmanFilter2D()
 
 # === Navigation target point ===
@@ -34,20 +33,22 @@ imu_reader = IMUReader()
 # come way
 #TARGETS = [(38.90764031, -92.26851491),(38.90768574, -92.26833880),(38.90775425, -92.26808159),(38.90780484, -92.26789371)]
 # out
+
+TARGETS = [
+(38.9425311, -92.31954402),
+(38.9425488, -92.31965974),
+(38.9425507, -92.31999613),
+(38.9425491, -92.32057431)
+]
+
+
 """
 TARGETS = [
 (38.94253063, -92.31954402),
-(38.94253614, -92.31965974),
-(38.94253921, -92.31999613),
 (38.94253776, -92.32057431)
 ]
 """
 
-
-TARGETS = [
-(38.94253063, -92.31954402),
-(38.94253776, -92.32057431)
-]
 current_target_idx = 0
 
 def get_current_target():
@@ -126,9 +127,11 @@ async def nav_task(ws):
         if current_target_idx >= len(TARGETS):
             print("[AUTO] ✅ All waypoints completed, automatically switching to manual mode.")
             mode = "manual"
+            current_target_idx = 0
+            await ws.send(" ")  # Notify robot to clear state
             continue
 
-        pos = get_filtered_gps()
+        pos = get_filtered_gps() #kalman
         yaw = _get_yaw()
 
         print("[AUTO] 🛰️ Getting latest GPS and IMU data...")
@@ -154,7 +157,7 @@ async def nav_task(ws):
               f"Lat={lat:.8f}, Lon={lon:.8f}, Dist={dist:.2f}m, Yaw={yaw:.2f}, "
               f"bearing={bearing:.2f}, Δ={diff:.2f}, Precision={precision:.2f}")
 
-        if dist < WAYPOINT_RADIUS:
+        if dist < WAYPOINT_RADIUS: #0.5 was original, prior to WAYPOINT_RADIUS. Using for baseline. Buffer radius
             print(f"[AUTO] 🎯 Reached waypoint {current_target_idx + 1} within {WAYPOINT_RADIUS:.2f}m buffer")
             current_target_idx += 1
             continue
@@ -220,7 +223,7 @@ async def keyboard_task(ws):
             await asyncio.sleep(0.01)
             continue
 
-        pos = _get_latest_fix()
+        pos = get_filtered_gps()
         yaw = _get_yaw()
         lat, lon, precision = pos["lat"], pos["lon"], pos["precision"]
         dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
@@ -252,13 +255,24 @@ async def keyboard_task(ws):
 # ======================
 # CSV Logging task
 # ======================
-async def csv_logging_task(get_pos_func, csv_logger):
+async def csv_logging_task(get_pos_func, get_yaw, csv_logger):
     try:
         while True:
             pos = get_pos_func()
-            if pos is not None:
+            yaw = get_yaw()
+            if pos is not None and yaw is not None:
                 lat, lon = pos["lat"], pos["lon"]
-                csv_logger.add_point(lon, lat)
+                yaw = yaw
+                dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
+                bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
+                diff = angle_diff_deg(bearing, yaw)
+                precision = pos.get("precision", 0.0)
+                bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
+                if bearing > 180:
+                    bearing -= 360
+                diff = angle_diff_deg(bearing, yaw)
+
+                csv_logger.add_point(dist, lon, lat, yaw, bearing, diff, precision)
             await asyncio.sleep(3)
     finally:
         csv_logger.close()
@@ -273,7 +287,7 @@ async def main():
         await asyncio.gather(
             nav_task(ws),
             keyboard_task(ws),
-            csv_logging_task(get_filtered_gps, csv_logger)
+            csv_logging_task(get_filtered_gps, _get_yaw, csv_logger)
         )
 
 if __name__ == "__main__":
