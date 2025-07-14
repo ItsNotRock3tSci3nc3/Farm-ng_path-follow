@@ -1,5 +1,6 @@
 import asyncio
 import cv2
+import os
 import math
 import websockets
 import pygame
@@ -7,6 +8,15 @@ import time
 # from imu_receiver import get_yaw
 from gps_reader import get_latest_fix 
 from imu_bno085_receiver import IMUReader
+
+def serial_imu_available(port="/dev/ttyACM0"):
+    return os.path.exists(port)
+
+# Oak-D IMU modules
+import depthai as dai
+
+oak_device = None
+oak_imu_queue = None
 
 from CSVLogger import CSVLogger
 csv_logger = CSVLogger("robot_track_kalman_buffer_yawAcc.csv") #CHANGE BEFORE TESTING
@@ -29,8 +39,6 @@ mode = "manual" # "manual" or "auto"
 SPEED_LEVELS = [0.2, 0.4, 0.6, 0.8, 0.9, 1.0]  # Speed percentage
 speed_index = 2
 last_record_time = 0
-
-imu_reader = IMUReader()
 
 # === List of navigation targets (latitude, longitude) ===
 # come way
@@ -60,6 +68,65 @@ def get_current_target():
     return None, None
 
 # ======================
+# Initialization
+# ======================
+def init_IMU(max_wait_seconds=15):
+    global imu_reader
+
+    if not serial_imu_available("/dev/ttyACM0"):
+        print("⚠️ Serial IMU port not found, skipping serial IMU initialization.")
+        imu_reader = None
+        return False
+
+    imu_reader = IMUReader()
+
+    print("🔄 Initializing Serial IMU...")
+
+    start_time = time.time()
+
+    while not imu_reader.running:
+        if time.time() - start_time > max_wait_seconds:
+            print("❌ Timeout: Serial IMU not connected after 15 seconds.")
+            return False
+        print("⚠️ Serial IMU not connected. Waiting...")
+        time.sleep(1)
+
+    print("✅ Serial IMU initialized.")
+    return True
+
+def init_OAK_IMU():
+    global oak_device, oak_imu_queue
+
+    print("🔄 Initializing OAK-D IMU...")
+
+    pipeline = dai.Pipeline()
+    imu = pipeline.createIMU()
+    imu.enableIMUSensor(dai.IMUSensor.ROTATION_VECTOR, 100)
+    imu.setBatchReportThreshold(1)
+    imu.setMaxBatchReports(10)
+
+    xout = pipeline.createXLinkOut()
+    xout.setStreamName("imu")
+    imu.out.link(xout.input)
+
+    oak_device = dai.Device(pipeline)
+    oak_imu_queue = oak_device.getOutputQueue(name="imu", maxSize=50, blocking=False)
+
+    print("✅ OAK-D IMU initialized.")
+
+
+def init_GPS():
+    global gps_reader
+    gps_reader = get_latest_fix(debug=False)
+    while gps_reader is None:
+        print("⚠️ GPS not connected. Please check the connection.")
+    while gps_reader.get("precision", float('inf')) > 2:
+        print("⚠️ GPS precision too low. Please ensure the GPS is connected to local wifi/hotspot and stable.")
+    print("✅ GPS initialized successfully.")
+    return True
+
+
+# ======================
 # Simulated GPS and IMU interfaces
 # ======================
 def _get_latest_fix():
@@ -77,17 +144,37 @@ def _get_latest_fix():
 
 
 def _get_yaw():
-    raw_yaw = imu_reader.get_yaw()
-    yaw_accuracy = imu_reader.get_accuracy()
-    
-    # Discard if yaw accuracy is poor
-    if yaw_accuracy < 2:
-        print(f"[IMU] ⚠️ Yaw accuracy too low ({yaw_accuracy:.2f}), discarding yaw")
-        return yaw_filter.filtered_yaw  # Return last valid filtered yaw
+    # Try serial IMU if available
+    if imu_reader is not None:
+        bno_yaw = imu_reader.get_yaw()
+        bno_acc = imu_reader.get_accuracy()
+        if bno_acc < 5.0:
+            return yaw_filter.update(bno_yaw, bno_acc)
+    '''
+    # Fallback to OAK-D IMU
+    if oak_imu_queue is not None:
+        imu_data = oak_imu_queue.tryGet()
+        if imu_data and len(imu_data.packets) > 0:
+            r = imu_data.packets[0].rotationVector
+            real, i, j, k = r.real, r.i, r.j, r.k
+            ysqr = j * j
+            t3 = +2.0 * (real * k + i * j)
+            t4 = +1.0 - 2.0 * (ysqr + k * k)
+            yaw_rad = math.atan2(t3, t4)
+            yaw_deg = (math.degrees(yaw_rad) + 360) % 360
+            return yaw_filter.update(yaw_deg, accuracy=3.0)
+    '''
+    print("[IMU] ⚠️ No valid IMU yaw available.")
+    return None
 
-    return yaw_filter.update(raw_yaw, yaw_accuracy)
+
 def _get_yaw_accuracy():
-    return imu_reader.get_accuracy()  # Get accuracy from IMU interface
+    if imu_reader is not None:
+        bno_acc = imu_reader.get_accuracy()
+        if bno_acc < 5.0:
+            return bno_acc
+    return 3.0  # OAK-D fallback accuracy
+
 
 # ======================
 # Heading/distance calculation utilities
@@ -187,6 +274,7 @@ async def nav_task(ws):
         base_speed = SPEED_LEVELS[speed_index]
 
         if abs(diff) > 5:
+            await asyncio.sleep(0.5)  # Small delay to gather updated IMU data
             cmd = "d" if diff > 0 else "a"
             # Slow turning — reduce speed while turning
             turn_speed = max(0.1, base_speed * 0.3)
@@ -194,12 +282,13 @@ async def nav_task(ws):
             await ws.send(f"{turn_speed:.2f}")  # Send speed
             await ws.send(cmd)                  # Send turn direction
         else:
+            await asyncio.sleep(0.5)  # Small delay to gather updated IMU data
             cmd = "w"
             print(f"[AUTO] 🚀 Moving forward at speed {base_speed:.2f}")
             await ws.send(f"{base_speed:.2f}")  # Send speed
             await ws.send(cmd)                  # Send move command
 
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1)
 
 # ======================
 # Keyboard control task
@@ -252,8 +341,8 @@ async def keyboard_task(ws):
         bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
         if bearing > 180:
             bearing -= 360
-        if yaw is None:
-            print("[AUTO] ⚠️ Yaw is None due to low accuracy. Skipping update.")
+        if yaw_acc >=5 and yaw is None:
+            print(f"[AUTO] ⚠️ Yaw is None due to low accuracy({yaw_acc}). Skipping update.")
             await asyncio.sleep(1)
             continue
         diff = angle_diff_deg(bearing, yaw)
@@ -292,10 +381,6 @@ async def csv_logging_task(get_pos_func, get_yaw, csv_logger):
                 yaw_acc = _get_yaw_accuracy()
                 dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
                 bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
-                if yaw is None:
-                    print("[AUTO] ⚠️ Yaw is None due to low accuracy. Skipping update.")
-                    await asyncio.sleep(1)
-                    continue
                 diff = angle_diff_deg(bearing, yaw)
                 precision = pos.get("precision", 0.0)
                 bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
@@ -313,6 +398,9 @@ async def csv_logging_task(get_pos_func, get_yaw, csv_logger):
 async def main():
     uri = "ws://100.87.161.11:8555"  # Replace with your robot IP
     print(f"🚀 Connecting to robot at {uri}")
+    init_IMU()
+    #init_OAK_IMU()
+    init_GPS()
     async with websockets.connect(uri) as ws:
         await asyncio.gather(
             nav_task(ws),
