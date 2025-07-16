@@ -1,6 +1,5 @@
 import asyncio
 import cv2
-import os
 import math
 import websockets
 import pygame
@@ -8,15 +7,6 @@ import time
 # from imu_receiver import get_yaw
 from gps_reader import get_latest_fix 
 from imu_bno085_receiver import IMUReader
-
-def serial_imu_available(port="/dev/ttyACM0"):
-    return os.path.exists(port)
-
-# Oak-D IMU modules
-import depthai as dai
-
-oak_device = None
-oak_imu_queue = None
 
 from CSVLogger import CSVLogger
 csv_logger = CSVLogger("robot_track_kalman_buffer_yawAcc.csv") #CHANGE BEFORE TESTING
@@ -39,6 +29,8 @@ mode = "manual" # "manual" or "auto"
 SPEED_LEVELS = [0.2, 0.4, 0.6, 0.8, 0.9, 1.0]  # Speed percentage
 speed_index = 2
 last_record_time = 0
+
+imu_reader = IMUReader()
 
 # === List of navigation targets (latitude, longitude) ===
 # come way
@@ -68,113 +60,23 @@ def get_current_target():
     return None, None
 
 # ======================
-# Initialization
-# ======================
-def init_IMU(max_wait_seconds=15):
-    global imu_reader
-
-    if not serial_imu_available("/dev/ttyACM0"):
-        print("⚠️ Serial IMU port not found, skipping serial IMU initialization.")
-        imu_reader = None
-        return False
-
-    imu_reader = IMUReader()
-
-    print("🔄 Initializing Serial IMU...")
-
-    start_time = time.time()
-
-    while not imu_reader.running:
-        if time.time() - start_time > max_wait_seconds:
-            print("❌ Timeout: Serial IMU not connected after 15 seconds.")
-            return False
-        print("⚠️ Serial IMU not connected. Waiting...")
-        time.sleep(1)
-
-    print("✅ Serial IMU initialized.")
-    return True
-
-def init_OAK_IMU():
-    global oak_device, oak_imu_queue
-
-    print("🔄 Initializing OAK-D IMU...")
-
-    pipeline = dai.Pipeline()
-    imu = pipeline.createIMU()
-    imu.enableIMUSensor(dai.IMUSensor.ROTATION_VECTOR, 100)
-    imu.setBatchReportThreshold(1)
-    imu.setMaxBatchReports(10)
-
-    xout = pipeline.createXLinkOut()
-    xout.setStreamName("imu")
-    imu.out.link(xout.input)
-
-    oak_device = dai.Device(pipeline)
-    oak_imu_queue = oak_device.getOutputQueue(name="imu", maxSize=50, blocking=False)
-
-    print("✅ OAK-D IMU initialized.")
-
-
-def init_GPS():
-    global gps_reader
-    gps_reader = get_latest_fix(debug=False)
-    while gps_reader is None:
-        print("⚠️ GPS not connected. Please check the connection.")
-    while gps_reader.get("precision", float('inf')) > 2:
-        print("⚠️ GPS precision too low. Please ensure the GPS is connected to local wifi/hotspot and stable.")
-    print("✅ GPS initialized successfully.")
-    return True
-
-
-# ======================
 # Simulated GPS and IMU interfaces
 # ======================
 def _get_latest_fix():
-    # TODO: Replace with real GPS module
-
-    # return {"lat": 38.94209340545889, "lon": -92.31854182078087, "precision": 0.8} # North
-    # return {"lat": 38.940795965552134, "lon": -92.3185432362358, "precision": 0.5}  # South
-    # return {"lat": 38.941245696031814, "lon": -92.31752127781246, "precision": 0.1}  # East
-    # return {"lat": 38.94124074, "lon": -92.3189133776869, "precision": 0.05}  # West
-    # return {"lat": 38.94208239631051, "lon": -92.31732877594878, "precision": 0.05}  # Northeast
-    # return {"lat": 38.940759084223465, "lon": -92.31987659473259, "precision": 0.05}  # Southwest
-
     return get_latest_fix(debug=False)
 
-
-
 def _get_yaw():
-    # Try serial IMU if available
-    if imu_reader is not None:
-        bno_yaw = imu_reader.get_yaw()
-        bno_acc = imu_reader.get_accuracy()
-        if bno_acc < 5.0:
-            return yaw_filter.update(bno_yaw, bno_acc)
-    '''
-    # Fallback to OAK-D IMU
-    if oak_imu_queue is not None:
-        imu_data = oak_imu_queue.tryGet()
-        if imu_data and len(imu_data.packets) > 0:
-            r = imu_data.packets[0].rotationVector
-            real, i, j, k = r.real, r.i, r.j, r.k
-            ysqr = j * j
-            t3 = +2.0 * (real * k + i * j)
-            t4 = +1.0 - 2.0 * (ysqr + k * k)
-            yaw_rad = math.atan2(t3, t4)
-            yaw_deg = (math.degrees(yaw_rad) + 360) % 360
-            return yaw_filter.update(yaw_deg, accuracy=3.0)
-    '''
-    print("[IMU] ⚠️ No valid IMU yaw available.")
-    return None
-
+    raw_yaw = imu_reader.get_yaw()
+    yaw_accuracy = imu_reader.get_accuracy()
+    
+    # Discard if yaw accuracy is poor
+    if yaw_accuracy > 5.0:
+        print(f"[IMU] ⚠️ Yaw accuracy too low ({yaw_accuracy:.2f}), discarding yaw")
+        return yaw_filter.filtered_yaw  # Return last valid filtered yaw
+    return yaw_filter.update(raw_yaw, yaw_accuracy)
 
 def _get_yaw_accuracy():
-    if imu_reader is not None:
-        bno_acc = imu_reader.get_accuracy()
-        if bno_acc < 5.0:
-            return bno_acc
-    return 3.0  # OAK-D fallback accuracy
-
+    return imu_reader.get_accuracy()  # Get accuracy from IMU interface
 
 # ======================
 # Heading/distance calculation utilities
@@ -249,6 +151,10 @@ async def nav_task(ws):
             print("[AUTO] ⚠️ IMU yaw acquisition failed, retrying...")
             await asyncio.sleep(1)
             continue
+        if yaw_acc > 5.0:
+            print(f"[AUTO] ⚠️ Yaw accuracy too low ({yaw_acc:.2f})")
+            await asyncio.sleep(1)
+            continue
 
         target_lat, target_lon = TARGETS[current_target_idx]
         dist = haversine_distance(lat, lon, target_lat, target_lon)
@@ -256,14 +162,12 @@ async def nav_task(ws):
         if bearing > 180:
             bearing -= 360
         if yaw is None:
-            print("[AUTO] ⚠️ Yaw is None due to low accuracy. Skipping update.")
+            print(f"[AUTO] ⚠️ Yaw is None. Skipping update. Yaw accuract:{yaw_acc:.2f}")
             await asyncio.sleep(1)
             continue
         diff = angle_diff_deg(bearing, yaw)
 
-        print(f"[AUTO] 📍 Waypoint {current_target_idx+1}/{len(TARGETS)} | "
-              f"Lat={lat:.8f}, Lon={lon:.8f}, Dist={dist:.2f}m, Yaw={yaw:.2f}, Yaw Accuracy={yaw_acc:.2f}, "
-              f"bearing={bearing:.2f}, Δ={diff:.2f}, Precision={precision:.2f}")
+        print_data("auto", f"Waypoint {current_target_idx+1}/{len(TARGETS)} | ")
 
         if dist < WAYPOINT_RADIUS: #0.5 was original, prior to WAYPOINT_RADIUS. Using for baseline. Buffer radius
             print(f"[AUTO] 🎯 Reached waypoint {current_target_idx + 1} within {WAYPOINT_RADIUS:.2f}m buffer")
@@ -274,7 +178,6 @@ async def nav_task(ws):
         base_speed = SPEED_LEVELS[speed_index]
 
         if abs(diff) > 5:
-            await asyncio.sleep(0.5)  # Small delay to gather updated IMU data
             cmd = "d" if diff > 0 else "a"
             # Slow turning — reduce speed while turning
             turn_speed = max(0.1, base_speed * 0.3)
@@ -282,13 +185,12 @@ async def nav_task(ws):
             await ws.send(f"{turn_speed:.2f}")  # Send speed
             await ws.send(cmd)                  # Send turn direction
         else:
-            await asyncio.sleep(0.5)  # Small delay to gather updated IMU data
             cmd = "w"
             print(f"[AUTO] 🚀 Moving forward at speed {base_speed:.2f}")
             await ws.send(f"{base_speed:.2f}")  # Send speed
             await ws.send(cmd)                  # Send move command
 
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.5)
 
 # ======================
 # Keyboard control task
@@ -333,21 +235,8 @@ async def keyboard_task(ws):
             await asyncio.sleep(0.01)
             continue
 
-        pos = get_filtered_gps()
-        yaw = _get_yaw()
-        yaw_acc = _get_yaw_accuracy()
-        lat, lon, precision = pos["lat"], pos["lon"], pos["precision"]
-        dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
-        bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
-        if bearing > 180:
-            bearing -= 360
-        if yaw_acc >=5 and yaw is None:
-            print(f"[AUTO] ⚠️ Yaw is None due to low accuracy({yaw_acc}). Skipping update.")
-            await asyncio.sleep(1)
-            continue
-        diff = angle_diff_deg(bearing, yaw)
-        print(f"[MANUAL] 📍 Lat={lat:.8f}, Lon={lon:.8f}, Dist={dist:.2f}m, Yaw={yaw:.2f}, Yaw precision = {yaw_acc:.2f}, bearing= {bearing:.2f}, Δ={diff:.2f}, Precision={precision:.2f}")
-        
+        print_data("manual")
+
         # === Handle direction combinations ===
         if pressed_keys:
             commands = []
@@ -381,16 +270,58 @@ async def csv_logging_task(get_pos_func, get_yaw, csv_logger):
                 yaw_acc = _get_yaw_accuracy()
                 dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
                 bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
+                if yaw is None:
+                    yaw = 0
+                    print(f"[CSV] ⚠️ Yaw is None. Using 0 as placeholder. Yaw accuracy: {yaw_acc:.2f}")
+                    continue
                 diff = angle_diff_deg(bearing, yaw)
                 precision = pos.get("precision", 0.0)
                 bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
                 if bearing > 180:
                     bearing -= 360
 
-                csv_logger.add_point(dist, lon, lat, yaw, yaw_acc, bearing, diff, precision)
+                UNIX_TIMESTAMP = time.time()  # Use a consistent timestamp for all points
+                datetime = datetime.datetime.fromtimestamp(UNIX_TIMESTAMP)
+                csv_logger.add_point(datetime, dist, lon, lat, yaw, yaw_acc, bearing, diff, precision)
             await asyncio.sleep(3)
     finally:
         csv_logger.close()
+
+# ======================
+# Print data to console
+# ======================
+def print_data(mode, ext_data=None):
+    mode = mode.upper()
+    pos = get_filtered_gps()
+    yaw = _get_yaw()
+    yaw_acc = _get_yaw_accuracy()
+    lat, lon, precision = pos["lat"], pos["lon"], pos["precision"]
+    dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
+    bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
+    if bearing > 180:
+        bearing -= 360
+    if yaw is None:
+        print(f"[{mode}] ⚠️ Yaw is None. Yaw accuracy: {yaw_acc:.2f}\n setting yaw to 0")
+        yaw = 0  # Fallback to 0 if yaw is None
+    diff = angle_diff_deg(bearing, yaw)
+    try:
+        if ext_data is not None:
+            print(f"[{mode}] 📍 {ext_data} Lat={fmt(lat, 8)}°, Lon={fmt(lon, 8)}°, Dist={fmt(dist, 2)}m, Yaw={fmt(yaw, 2)}, Yaw precision = {fmt(yaw_acc)}, bearing= {fmt(bearing, 2)}, Δ={fmt(diff, 2)}, Precision={fmt(precision, 2)}")
+        else:
+            print(f"[{mode}] 📍 Lat={fmt(lat, 8)}°, Lon={fmt(lon, 8)}°, Dist={fmt(dist, 2)}m, Yaw={fmt(yaw, 2)}, Yaw precision = {fmt(yaw_acc)}, bearing= {fmt(bearing, 2)}, Δ={fmt(diff, 2)}, Precision={fmt(precision, 2)}")
+    except Exception as e:
+        print(f"[{mode}] Error printing data: {e}")   
+
+# data formatter
+def fmt(val, precision=None):
+    try:
+        if precision is None:
+            return str(val) if isinstance(val, (float, int)) else "None"
+        return f"{float(val):.{precision}f}"
+    except (ValueError, TypeError):
+        return "None"
+
+ 
 
 # ======================
 # Main entry
@@ -398,9 +329,6 @@ async def csv_logging_task(get_pos_func, get_yaw, csv_logger):
 async def main():
     uri = "ws://100.87.161.11:8555"  # Replace with your robot IP
     print(f"🚀 Connecting to robot at {uri}")
-    init_IMU()
-    #init_OAK_IMU()
-    init_GPS()
     async with websockets.connect(uri) as ws:
         await asyncio.gather(
             nav_task(ws),
@@ -412,4 +340,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"[CONTROLLER] Error: {e}")

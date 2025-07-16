@@ -17,20 +17,26 @@ class IMUReader:
         self.thread.start()
         print(f"[IMUReader] Listening on {port}...")
 
-    def _read_loop(self):
+    def _read_loop(self, debug=False):
         while self.running:
             try:
                 line = self.ser.readline().decode().strip()
                 if not line:
                     continue
+                if debug == True: print(f"[IMU READER] Received: {line}")
+                parts = [x.strip() for x in line.split(",") if x.strip()]
+                if len(parts) != 4:
+                    print(f"[IMU READER] Invalid line: {line}")
+                    continue
                 r, p, y, acc = map(float, line.split(","))
+                if debug == True: print(f"[IMU READER] Parsed: Roll={r}, Pitch={p}, Yaw={y}, Accuracy={acc}")
                 with self.lock:
                     self.roll = r
                     self.pitch = p
                     self.yaw = y
                     self.accuracy = acc
             except Exception as e:
-                print("[IMUReader] Parse error:", e)
+                print("[IMU READER] Parse error:", e)
 
     def get_yaw(self):
         with self.lock:
@@ -57,8 +63,10 @@ if __name__ == "__main__":
         while True:
             yaw = imu.get_yaw()
             if yaw is not None:
-                print(f"Current Yaw: {yaw:.1f}°")
-            time.sleep(0.2)
+                print(f"Current Yaw: {yaw:.2f}°")
+            else:
+                print("[IMU READER] Yaw data not available.")
+            time.sleep(0.5)
     except KeyboardInterrupt:
         print("\nStopping IMU reader...")
         imu.stop()

@@ -1,1 +1,1 @@
-distance,latitude,longitude,yaw,yaw precision,heading,delta,precision
+timestamp,distance,latitude,longitude,yaw,yaw precision,heading,delta,precision
