@@ -1,5 +1,6 @@
 import asyncio
 import cv2
+import os
 import math
 import websockets
 import pygame
@@ -9,7 +10,13 @@ from gps_reader import get_latest_fix
 from imu_bno085_receiver import IMUReader
 
 from CSVLogger import CSVLogger
-csv_logger = CSVLogger("robot_track_kalman_buffer_yawAcc.csv") #CHANGE BEFORE TESTING
+
+test_name = "robot_track_kalman_buffer_yawAcc" #CHANGE BEFORE TESTING
+logging = input("Enable logging(y/n)? Press Enter to continue\n")
+if logging.lower() == "y" or logging.lower() == "yes":
+    csv_logger = CSVLogger(f"{test_name}.csv", True)
+else:
+    csv_logger = CSVLogger(f"{test_name}.csv", False)
 
 from kalman import KalmanFilter2D
 kf = KalmanFilter2D()
@@ -30,7 +37,7 @@ SPEED_LEVELS = [0.2, 0.4, 0.6, 0.8, 0.9, 1.0]  # Speed percentage
 speed_index = 2
 last_record_time = 0
 
-imu_reader = IMUReader()
+imu_reader = IMUReader()  # Initialize IMU reader
 
 # === List of navigation targets (latitude, longitude) ===
 # come way
@@ -68,11 +75,14 @@ def _get_latest_fix():
 def _get_yaw():
     raw_yaw = imu_reader.get_yaw()
     yaw_accuracy = imu_reader.get_accuracy()
-    
-    # Discard if yaw accuracy is poor
+
+    if raw_yaw is None or yaw_accuracy is None:
+        return None
+
     if yaw_accuracy > 5.0:
-        print(f"[IMU] ⚠️ Yaw accuracy too low ({yaw_accuracy:.2f}), discarding yaw")
-        return yaw_filter.filtered_yaw  # Return last valid filtered yaw
+        print(f"[IMU] ⚠️ Yaw accuracy too low ({fmt(yaw_accuracy)}), discarding yaw")
+        return yaw_filter.filtered_yaw
+
     return yaw_filter.update(raw_yaw, yaw_accuracy)
 
 def _get_yaw_accuracy():
@@ -295,7 +305,15 @@ def print_data(mode, ext_data=None):
     pos = get_filtered_gps()
     yaw = _get_yaw()
     yaw_acc = _get_yaw_accuracy()
-    lat, lon, precision = pos["lat"], pos["lon"], pos["precision"]
+
+    if pos is None:
+        print(f"[{mode}] ⚠️ GPS data unavailable.")
+        return
+    if yaw is None:
+        print(f"[{mode}] ⚠️ IMU yaw is None. Yaw accuracy: {fmt(yaw_acc)}")
+        yaw = 0
+
+    lat, lon, precision = pos.get("lat"), pos.get("lon"), pos.get("precision")
     dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
     bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
     if bearing > 180:
@@ -319,9 +337,7 @@ def fmt(val, precision=None):
             return str(val) if isinstance(val, (float, int)) else "None"
         return f"{float(val):.{precision}f}"
     except (ValueError, TypeError):
-        return "None"
-
- 
+        return "None" 
 
 # ======================
 # Main entry
@@ -335,9 +351,11 @@ async def main():
             keyboard_task(ws),
             csv_logging_task(get_filtered_gps, _get_yaw, csv_logger)
         )
+    
+
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except Exception as e:
-        print(f"[CONTROLLER] Error: {e}")
+        print(f"[CONTROLLER] Error: {e}\n{e.__annotations__}\n{e.__traceback__}")

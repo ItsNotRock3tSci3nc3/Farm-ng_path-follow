@@ -83,5 +83,5 @@ def get_latest_fix(debug=False):
         except KeyboardInterrupt:
             break
         except Exception as e:
-            print(f"Read error: {e}")
+            print(f"[GPS READER] Read error: {e}")
             return None

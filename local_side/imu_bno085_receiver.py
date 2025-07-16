@@ -10,6 +10,7 @@ class IMUReader:
         self.roll = None
         self.pitch = None
         self.yaw = None
+        self.accuracy = None
         self.lock = threading.Lock()
         self.running = True
 
@@ -17,19 +18,26 @@ class IMUReader:
         self.thread.start()
         print(f"[IMUReader] Listening on {port}...")
 
-    def _read_loop(self, debug=False):
+    def _read_loop(self):
+        debug = True
         while self.running:
             try:
                 line = self.ser.readline().decode().strip()
                 if not line:
                     continue
-                if debug == True: print(f"[IMU READER] Received: {line}")
+                
+                if debug: 
+                    print(f"[IMU READER] Received: {line}")
+                
                 parts = [x.strip() for x in line.split(",") if x.strip()]
                 if len(parts) != 4:
                     print(f"[IMU READER] Invalid line: {line}")
-                    continue
+                    return None
                 r, p, y, acc = map(float, line.split(","))
-                if debug == True: print(f"[IMU READER] Parsed: Roll={r}, Pitch={p}, Yaw={y}, Accuracy={acc}")
+
+                if debug: 
+                    print(f"[IMU READER] Parsed: Roll={r}, Pitch={p}, Yaw={y}, Accuracy={acc}")
+                
                 with self.lock:
                     self.roll = r
                     self.pitch = p
