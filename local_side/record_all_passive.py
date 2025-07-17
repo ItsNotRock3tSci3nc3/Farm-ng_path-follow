@@ -13,7 +13,7 @@ imu_reader = IMUReader()
 from CSVLogger import CSVLogger
 csv_logger = CSVLogger("robot_track_testrun1.csv") #CHANGE BEFORE TESTING
 
-from kalman import KalmanFilter2D
+from local_side.kalman_filter import KalmanFilter2D
 kf = KalmanFilter2D()
 
 from yaw_filter import YawFilter

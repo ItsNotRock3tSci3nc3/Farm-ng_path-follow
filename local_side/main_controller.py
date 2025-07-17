@@ -19,7 +19,7 @@ if logging.lower() == "y" or logging.lower() == "yes":
 else:
     csv_logger = CSVLogger(f"{test_name}.csv", False)
 
-from kalman import KalmanFilter2D
+from local_side.kalman_filter import KalmanFilter2D
 kf = KalmanFilter2D()
 
 from yaw_filter import YawFilter
