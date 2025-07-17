@@ -19,7 +19,7 @@ if logging.lower() == "y" or logging.lower() == "yes":
 else:
     csv_logger = CSVLogger(f"{test_name}.csv", False)
 
-from local_side.kalman_filter import KalmanFilter2D
+from kalman_filter import KalmanFilter2D
 kf = KalmanFilter2D()
 
 from yaw_filter import YawFilter
@@ -45,11 +45,22 @@ imu_reader = IMUReader()  # Initialize IMU reader
 #TARGETS = [(38.90764031, -92.26851491),(38.90768574, -92.26833880),(38.90775425, -92.26808159),(38.90780484, -92.26789371)]
 # out
 
+"""
+Sanborn Field
 TARGETS = [
 (38.9425311, -92.31954402),
 (38.9425488, -92.31965974),
 (38.9425507, -92.31999613),
 (38.9425491, -92.32057431)
+]
+"""
+
+"""
+Yard
+"""
+TARGETS = [
+(38.941226778933206, -92.31878180426872),
+(38.94113774185417, -92.31877807500175)
 ]
 
 
@@ -84,7 +95,18 @@ def _get_yaw():
         print(f"[IMU] ⚠️ Yaw accuracy too low ({fmt(yaw_accuracy)}), discarding yaw")
         return yaw_filter.filtered_yaw
 
-    return yaw_filter.update(raw_yaw, yaw_accuracy)
+    filtered_yaw = yaw_filter.update(raw_yaw, yaw_accuracy)
+    # ✅ Invert yaw to correct flipped IMU direction
+    corrected_yaw = -filtered_yaw
+
+    # Optional: normalize to [-180, 180] just in case
+    if corrected_yaw > 180:
+        corrected_yaw -= 360
+    elif corrected_yaw < -180:
+        corrected_yaw += 360
+
+    return corrected_yaw
+    #return yaw_filter.update(raw_yaw, yaw_accuracy)
 
 def _get_yaw_accuracy():
     return imu_reader.get_accuracy()  # Get accuracy from IMU interface
@@ -105,11 +127,21 @@ def bearing_deg(lat1, lon1, lat2, lon2):
     y = math.sin(d_lon) * math.cos(math.radians(lat2))
     x = math.cos(math.radians(lat1)) * math.sin(math.radians(lat2)) - \
         math.sin(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.cos(d_lon)
-    return (math.degrees(math.atan2(y, x)) + 360) % 360
+    
+    bearing = math.degrees(math.atan2(y, x))
+    
+    # Normalize to [-180, 180]
+    if bearing > 180:
+        bearing -= 360
+    elif bearing < -180:
+        bearing += 360
+
+    return bearing
+
 
 def angle_diff_deg(bearing, yaw):
     diff = bearing - yaw
-    while diff < -180:
+    while diff < -180:  #Flipped the <> symbols for the 2 while loops.
         diff += 360
     while diff > 180:
         diff -= 360
@@ -170,15 +202,14 @@ async def nav_task(ws):
         target_lat, target_lon = TARGETS[current_target_idx]
         dist = haversine_distance(lat, lon, target_lat, target_lon)
         bearing = bearing_deg(lat, lon, target_lat, target_lon)
-        if bearing > 180:
-            bearing -= 360
+    
         if yaw is None:
             print(f"[AUTO] ⚠️ Yaw is None. Skipping update. Yaw accuract:{yaw_acc:.2f}")
             await asyncio.sleep(1)
             continue
         diff = angle_diff_deg(bearing, yaw)
 
-        print_data("auto", f"Waypoint {current_target_idx+1}/{len(TARGETS)} | ")
+        print_data("auto", f"Waypoint {current_target_idx+1}/{len(TARGETS)} | ", diff)
 
         if dist < WAYPOINT_RADIUS: #0.5 was original, prior to WAYPOINT_RADIUS. Using for baseline. Buffer radius
             print(f"[AUTO] 🎯 Reached waypoint {current_target_idx + 1} within {WAYPOINT_RADIUS:.2f}m buffer")
@@ -188,11 +219,11 @@ async def nav_task(ws):
         # === Smart turning (dynamic turning speed) ===
         base_speed = SPEED_LEVELS[speed_index]
 
-        if abs(diff) > 5:
+        if abs(diff) >5:
             cmd = "d" if diff > 0 else "a"
             # Slow turning — reduce speed while turning
             turn_speed = max(0.1, base_speed * 0.3)
-            print(f"[AUTO] 🔄 Turning | Δ={abs(diff):.2f}° | Turn Speed={turn_speed:.2f} | Command={cmd}")
+            print(f"[AUTO] 🔄 Turning | Yaw = {yaw} | Δ={abs(diff):.2f}° | Turn Speed={turn_speed:.2f} | Command={cmd}")
             await ws.send(f"{turn_speed:.2f}")  # Send speed
             await ws.send(cmd)                  # Send turn direction
         else:
@@ -303,7 +334,7 @@ async def csv_logging_task(get_pos_func, get_yaw, csv_logger):
 # ======================
 # Print data to console
 # ======================
-def print_data(mode, ext_data=None):
+def print_data(mode, ext_data=None, diff = None):
     mode = mode.upper()
     pos = get_filtered_gps()
     yaw = _get_yaw()
@@ -324,7 +355,6 @@ def print_data(mode, ext_data=None):
     if yaw is None:
         print(f"[{mode}] ⚠️ Yaw is None. Yaw accuracy: {yaw_acc:.2f}\n setting yaw to 0")
         yaw = 0  # Fallback to 0 if yaw is None
-    diff = angle_diff_deg(bearing, yaw)
     try:
         if ext_data is not None:
             print(f"[{mode}] 📍 {ext_data} Lat={fmt(lat, 8)}°, Lon={fmt(lon, 8)}°, Dist={fmt(dist, 2)}m, Yaw={fmt(yaw, 2)}, Yaw precision = {fmt(yaw_acc)}, bearing= {fmt(bearing, 2)}, Δ={fmt(diff, 2)}, Precision={fmt(precision, 2)}")

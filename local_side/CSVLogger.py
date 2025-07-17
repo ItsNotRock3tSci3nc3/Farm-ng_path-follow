@@ -13,7 +13,10 @@ class CSVLogger:
             return
         base_dir = Path("CSV_files")
         base_dir.mkdir(exist_ok=True)
-
+        
+        if filename.endswith(".csv"):
+            filename = filename[:-4]  # Remove .csv if present
+            print(f"[CSVLogger] Removed .csv from filename: {filename}")
         folder = base_dir / filename
         folder.mkdir(parents=True, exist_ok=True)
 
@@ -22,7 +25,7 @@ class CSVLogger:
         file_path = folder / csv_name
         count = 1
         while file_path.exists():
-            csv_name = f"{filename}_run{count}.csv"
+            csv_name = f"{filename[:-4]}_run{count}.csv"
             file_path = folder / csv_name
             count += 1
 
