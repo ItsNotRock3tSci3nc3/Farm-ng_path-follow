@@ -12,7 +12,7 @@ class YawFilter:
         > 10.0	Unreliable	Don't use for navigation
         '''
 
-        print(f"[YawFilter] Updating filtered_yaw: {self.filtered_yaw:.2f} from raw: {raw_yaw:.2f}, precision: {precision:.2f}")
+        #print(f"[YawFilter] Updating filtered_yaw: {self.filtered_yaw:.2f} from raw: {raw_yaw:.2f}, precision: {precision:.2f}")
         if precision > 5.0:
             return self.filtered_yaw or 0.0
         if self.filtered_yaw is None:

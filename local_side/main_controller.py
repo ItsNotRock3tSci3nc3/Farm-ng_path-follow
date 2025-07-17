@@ -5,7 +5,8 @@ import math
 import websockets
 import pygame
 import time
-# from imu_receiver import get_yaw
+import datetime
+
 from gps_reader import get_latest_fix 
 from imu_bno085_receiver import IMUReader
 
@@ -209,6 +210,8 @@ async def keyboard_task(ws):
     global mode, speed_index
 
     pygame.init()
+    if pygame.get_init: print("pygame initialized") 
+    else: print("pygame not initialized")
     screen = pygame.display.set_mode((300, 100))  # Must create a window
     pygame.display.set_caption("Control Window")
 
@@ -291,9 +294,9 @@ async def csv_logging_task(get_pos_func, get_yaw, csv_logger):
                     bearing -= 360
 
                 UNIX_TIMESTAMP = time.time()  # Use a consistent timestamp for all points
-                datetime = datetime.datetime.fromtimestamp(UNIX_TIMESTAMP)
-                csv_logger.add_point(datetime, dist, lon, lat, yaw, yaw_acc, bearing, diff, precision)
-            await asyncio.sleep(3)
+                timestamp_converted = datetime.datetime.fromtimestamp(UNIX_TIMESTAMP)
+                csv_logger.add_point(timestamp_converted, dist, lon, lat, yaw, yaw_acc, bearing, diff, precision)
+            await asyncio.sleep(1)
     finally:
         csv_logger.close()
 

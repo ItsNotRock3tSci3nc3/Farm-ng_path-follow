@@ -19,7 +19,7 @@ class IMUReader:
         print(f"[IMUReader] Listening on {port}...")
 
     def _read_loop(self):
-        debug = True
+        debug = False
         while self.running:
             try:
                 line = self.ser.readline().decode().strip()
@@ -30,9 +30,9 @@ class IMUReader:
                     print(f"[IMU READER] Received: {line}")
                 
                 parts = [x.strip() for x in line.split(",") if x.strip()]
-                if len(parts) != 4:
-                    print(f"[IMU READER] Invalid line: {line}")
-                    return None
+                #if len(parts) != 4:
+                #    print(f"[IMU READER] Invalid line: {line}")
+                #    return None
                 r, p, y, acc = map(float, line.split(","))
 
                 if debug: 
