@@ -5,22 +5,30 @@ This verion of main_controller.py is designed to work with the lookahead control
 
 import asyncio
 import cv2
+import os
 import math
 import websockets
 import pygame
 import time
-# from imu_receiver import get_yaw
+import datetime
+
 from gps_reader import get_latest_fix 
 from imu_bno085_receiver import IMUReader
 
 from CSVLogger import CSVLogger
-csv_logger = CSVLogger("robot_track_lookahead.csv") #CHANGE BEFORE TESTING
 
-from local_side.kalman_filter import KalmanFilter2D
+test_name = "robot_track_lookahead" #CHANGE BEFORE TESTING
+logging = input("Enable logging(y/n)? Press Enter to continue\n")
+if logging.lower() == "y" or logging.lower() == "yes":
+    csv_logger = CSVLogger(f"{test_name}.csv", True)
+else:
+    csv_logger = CSVLogger(f"{test_name}.csv", False)
+
+from kalman_filter import KalmanFilter2D
 kf = KalmanFilter2D()
 
 from yaw_filter import YawFilter
-yaw_filter = YawFilter()
+yaw_filter = YawFilter(alpha=0.7)  # Adjust alpha as needed
 
 # === Navigation target point ===
 TARGET_LAT = 38.94123854
@@ -47,13 +55,23 @@ imu_reader = IMUReader()
 #TARGETS = [(38.90764031, -92.26851491),(38.90768574, -92.26833880),(38.90775425, -92.26808159),(38.90780484, -92.26789371)]
 # out
 
+"""
+Sanborn Field
 TARGETS = [
 (38.9425311, -92.31954402),
 (38.9425488, -92.31965974),
 (38.9425507, -92.31999613),
 (38.9425491, -92.32057431)
 ]
+"""
 
+"""
+Yard
+"""
+TARGETS = [
+(38.941226778933206, -92.31878180426872),
+(38.94113774185417, -92.31877807500175)
+]
 
 """
 TARGETS = [
@@ -87,10 +105,31 @@ def _get_latest_fix():
 
 
 def _get_yaw():
-    # TODO: Replace with real IMU module
-    raw_yaw = imu_reader.get_yaw()  # Get raw heading angle from IMU interface
-    # return 45.0  # Assume heading 45°
-    return yaw_filter.update(raw_yaw)  # Get heading angle from IMU interface
+    raw_yaw = imu_reader.get_yaw()
+    yaw_accuracy = imu_reader.get_accuracy()
+
+    if raw_yaw is None or yaw_accuracy is None:
+        return None
+
+    if yaw_accuracy > 5.0:
+        print(f"[IMU] ⚠️ Yaw accuracy too low ({fmt(yaw_accuracy)}), discarding yaw")
+        return yaw_filter.filtered_yaw
+
+    filtered_yaw = yaw_filter.update(raw_yaw, yaw_accuracy)
+    # ✅ Invert yaw to correct flipped IMU direction
+    corrected_yaw = -filtered_yaw
+
+    # Optional: normalize to [-180, 180] just in case
+    if corrected_yaw > 180:
+        corrected_yaw -= 360
+    elif corrected_yaw < -180:
+        corrected_yaw += 360
+
+    return corrected_yaw
+    #return yaw_filter.update(raw_yaw, yaw_accuracy)
+
+def _get_yaw_accuracy():
+    return imu_reader.get_accuracy()  # Get accuracy from IMU interface
 
 # ======================
 # Heading/distance calculation utilities
@@ -108,7 +147,16 @@ def bearing_deg(lat1, lon1, lat2, lon2):
     y = math.sin(d_lon) * math.cos(math.radians(lat2))
     x = math.cos(math.radians(lat1)) * math.sin(math.radians(lat2)) - \
         math.sin(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.cos(d_lon)
-    return (math.degrees(math.atan2(y, x)) + 360) % 360
+    
+    bearing = math.degrees(math.atan2(y, x))
+    
+    # Normalize to [-180, 180]
+    if bearing > 180:
+        bearing -= 360
+    elif bearing < -180:
+        bearing += 360
+
+    return bearing
 
 def angle_diff_deg(bearing, yaw):
     diff = bearing - yaw
@@ -152,6 +200,7 @@ async def nav_task(ws):
 
         pos = _get_latest_fix() #get_filtered_gps() #kalman
         yaw = _get_yaw()
+        yaw_acc = _get_yaw_accuracy()
 
         print("[AUTO] 🛰️ Getting latest GPS and IMU data...")
         lat, lon, precision = pos["lat"], pos["lon"], pos["precision"]
@@ -162,6 +211,10 @@ async def nav_task(ws):
             continue
         if yaw is None:
             print("[AUTO] ⚠️ IMU yaw acquisition failed, retrying...")
+            await asyncio.sleep(1)
+            continue
+        if yaw_acc > 5.0:
+            print(f"[AUTO] ⚠️ Yaw accuracy too low ({yaw_acc:.2f})")
             await asyncio.sleep(1)
             continue
 
@@ -187,11 +240,10 @@ async def nav_task(ws):
             bearing -= 360
         diff = angle_diff_deg(bearing, yaw)
 
-        print(f"[AUTO] 📍 Waypoint {current_target_idx+1}/{len(TARGETS)} | "
-              f"Lat={lat:.8f}, Lon={lon:.8f}, Dist={dist:.2f}m, Yaw={yaw:.2f}, "
-              f"bearing={bearing:.2f}, Δ={diff:.2f}, Precision={precision:.2f}")
+        print_data("auto", f"Waypoint {current_target_idx+1}/{len(TARGETS)} | ", diff)
 
-        if dist < 0.5: #WAYPOINT_RADIUS: #0.5 was original, prior to WAYPOINT_RADIUS. Using for baseline. Buffer radius
+
+        if dist < WAYPOINT_RADIUS: #WAYPOINT_RADIUS: #0.5 was original, prior to WAYPOINT_RADIUS. Using for baseline. Buffer radius
             print(f"[AUTO] 🎯 Reached waypoint {current_target_idx + 1} within {WAYPOINT_RADIUS:.2f}m buffer")
             current_target_idx += 1
             continue
@@ -221,6 +273,8 @@ async def keyboard_task(ws):
     global mode, speed_index
 
     pygame.init()
+    if pygame.get_init: print("pygame initialized") 
+    else: print("pygame not initialized")
     screen = pygame.display.set_mode((300, 100))  # Must create a window
     pygame.display.set_caption("Control Window")
 
@@ -257,15 +311,7 @@ async def keyboard_task(ws):
             await asyncio.sleep(0.01)
             continue
 
-        pos = _get_latest_fix() #get_filtered_gps()
-        yaw = _get_yaw()
-        lat, lon, precision = pos["lat"], pos["lon"], pos["precision"]
-        dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
-        bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
-        if bearing > 180:
-            bearing -= 360
-        diff = angle_diff_deg(bearing, yaw)
-        print(f"[MANUAL] 📍 Lat={lat:.8f}, Lon={lon:.8f}, Dist={dist:.2f}m, Yaw={yaw:.2f}, bearing= {bearing:.2f}, Δ={diff:.2f}, Precision={precision:.2f}")
+        print_data("manual")
         
         # === Handle direction combinations ===
         if pressed_keys:
@@ -297,15 +343,66 @@ async def csv_logging_task(get_pos_func, get_yaw, csv_logger):
             if pos is not None and yaw is not None:
                 lat, lon = pos["lat"], pos["lon"]
                 yaw = yaw
+                yaw_acc = _get_yaw_accuracy()
                 dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
                 bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
+                if yaw is None:
+                    yaw = 0
+                    print(f"[CSV] ⚠️ Yaw is None. Using 0 as placeholder. Yaw accuracy: {yaw_acc:.2f}")
+                    continue
                 diff = angle_diff_deg(bearing, yaw)
                 precision = pos.get("precision", 0.0)
-                heading = yaw  # Use yaw as heading for simplicity
-                csv_logger.add_point(dist, lon, lat, yaw, heading, diff, precision)
-            await asyncio.sleep(3)
+                bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
+                if bearing > 180:
+                    bearing -= 360
+
+                UNIX_TIMESTAMP = time.time()  # Use a consistent timestamp for all points
+                timestamp_converted = datetime.datetime.fromtimestamp(UNIX_TIMESTAMP)
+                csv_logger.add_point(timestamp_converted, dist, lon, lat, yaw, yaw_acc, bearing, diff, precision)
+            await asyncio.sleep(1)
     finally:
         csv_logger.close()
+
+# ======================
+# Print data to console
+# ======================
+def print_data(mode, ext_data=None, diff = None):
+    mode = mode.upper()
+    pos = get_filtered_gps()
+    yaw = _get_yaw()
+    yaw_acc = _get_yaw_accuracy()
+
+    if pos is None:
+        print(f"[{mode}] ⚠️ GPS data unavailable.")
+        return
+    if yaw is None:
+        print(f"[{mode}] ⚠️ IMU yaw is None. Yaw accuracy: {fmt(yaw_acc)}")
+        yaw = 0
+
+    lat, lon, precision = pos.get("lat"), pos.get("lon"), pos.get("precision")
+    dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
+    bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
+    if bearing > 180:
+        bearing -= 360
+    if yaw is None:
+        print(f"[{mode}] ⚠️ Yaw is None. Yaw accuracy: {yaw_acc:.2f}\n setting yaw to 0")
+        yaw = 0  # Fallback to 0 if yaw is None
+    try:
+        if ext_data is not None:
+            print(f"[{mode}] 📍 {ext_data} Lat={fmt(lat, 8)}°, Lon={fmt(lon, 8)}°, Dist={fmt(dist, 2)}m, Yaw={fmt(yaw, 2)}, Yaw precision = {fmt(yaw_acc)}, bearing= {fmt(bearing, 2)}, Δ={fmt(diff, 2)}, Precision={fmt(precision, 2)}")
+        else:
+            print(f"[{mode}] 📍 Lat={fmt(lat, 8)}°, Lon={fmt(lon, 8)}°, Dist={fmt(dist, 2)}m, Yaw={fmt(yaw, 2)}, Yaw precision = {fmt(yaw_acc)}, bearing= {fmt(bearing, 2)}, Δ={fmt(diff, 2)}, Precision={fmt(precision, 2)}")
+    except Exception as e:
+        print(f"[{mode}] Error printing data: {e}")   
+
+# data formatter
+def fmt(val, precision=None):
+    try:
+        if precision is None:
+            return str(val) if isinstance(val, (float, int)) else "None"
+        return f"{float(val):.{precision}f}"
+    except (ValueError, TypeError):
+        return "None" 
 
 # ======================
 # Main entry
@@ -324,5 +421,5 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"[CONTROLLER] Error: {e}\n{e.__annotations__}\n{e.__traceback__}")
 

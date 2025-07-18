@@ -203,10 +203,6 @@ async def nav_task(ws):
         dist = haversine_distance(lat, lon, target_lat, target_lon)
         bearing = bearing_deg(lat, lon, target_lat, target_lon)
     
-        if yaw is None:
-            print(f"[AUTO] ⚠️ Yaw is None. Skipping update. Yaw accuract:{yaw_acc:.2f}")
-            await asyncio.sleep(1)
-            continue
         diff = angle_diff_deg(bearing, yaw)
 
         print_data("auto", f"Waypoint {current_target_idx+1}/{len(TARGETS)} | ", diff)
