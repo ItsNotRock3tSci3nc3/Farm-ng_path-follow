@@ -45,7 +45,10 @@ speed_index = 2
 last_record_time = 0
 
 # === lookahead distance ===
-LOOKAHEAD_DISTANCE = max(1.0, speed_index * 3.0)  # meters (adjust as needed)
+LOOKAHEAD_DISTANCE = SPEED_LEVELS[speed_index] * 3.0  # e.g. 0.6 → 1.8m
+LOOKAHEAD_DISTANCE = max(1.2, min(4.0, LOOKAHEAD_DISTANCE))
+
+omega_history = []
 
 # === IMU reader instance ===
 imu_reader = IMUReader()
@@ -57,6 +60,7 @@ imu_reader = IMUReader()
 
 """
 Sanborn Field
+
 TARGETS = [
 (38.9425311, -92.31954402),
 (38.9425488, -92.31965974),
@@ -68,10 +72,12 @@ TARGETS = [
 """
 Yard
 """
+
 TARGETS = [
 (38.941226778933206, -92.31878180426872),
 (38.94113774185417, -92.31877807500175)
 ]
+
 
 """
 TARGETS = [
@@ -117,7 +123,7 @@ def _get_yaw():
 
     filtered_yaw = yaw_filter.update(raw_yaw, yaw_accuracy)
     # ✅ Invert yaw to correct flipped IMU direction
-    corrected_yaw = -filtered_yaw
+    corrected_yaw = filtered_yaw
 
     # Optional: normalize to [-180, 180] just in case
     if corrected_yaw > 180:
@@ -185,86 +191,104 @@ def map_angle_to_speed(diff_deg):
     return round(min(speed, 0.9), 2)
 
 async def nav_task(ws):
-    global mode, current_target_idx
+    global current_target_idx
     while True:
         if mode != "auto":
             await asyncio.sleep(0.1)
             continue
-
-        if current_target_idx >= len(TARGETS):
-            print("[AUTO] ✅ All waypoints completed, automatically switching to manual mode.")
-            mode = "manual"
-            current_target_idx = 0
-            await ws.send(" ")  # Notify robot to clear state
-            continue
-
-        pos = _get_latest_fix() #get_filtered_gps() #kalman
+        pos = _get_latest_fix()
         yaw = _get_yaw()
         yaw_acc = _get_yaw_accuracy()
+        if pos is None or yaw is None or yaw_acc > 5.0:
+            await asyncio.sleep(1)
+            continue
 
-        print("[AUTO] 🛰️ Getting latest GPS and IMU data...")
         lat, lon, precision = pos["lat"], pos["lon"], pos["precision"]
-
         if precision > 2 or math.isnan(precision):
-            print(f"[AUTO] ⚠️ Poor GPS precision: {precision:.2f}m")
-            await asyncio.sleep(1)
-            continue
-        if yaw is None:
-            print("[AUTO] ⚠️ IMU yaw acquisition failed, retrying...")
-            await asyncio.sleep(1)
-            continue
-        if yaw_acc > 5.0:
-            print(f"[AUTO] ⚠️ Yaw accuracy too low ({yaw_acc:.2f})")
             await asyncio.sleep(1)
             continue
 
-        # === Pure Pursuit look-ahead point selection ===
-        LOOKAHEAD_DISTANCE = max(1.0, speed_index * 3.0)  # meters (adjust as needed)
+        # Constants for projection
+        LAT_TO_M = 111000
+        LON_TO_M = 111000 * math.cos(math.radians(lat))
+        theta = math.radians(yaw)
+
         lookahead_point = None
         for i in range(current_target_idx, len(TARGETS)):
             wp_lat, wp_lon = TARGETS[i]
-            dist_to_wp = haversine_distance(lat, lon, wp_lat, wp_lon)
-            if dist_to_wp >= LOOKAHEAD_DISTANCE:
+            dx = (wp_lon - lon) * LON_TO_M
+            dy = (wp_lat - lat) * LAT_TO_M
+            Xr = math.cos(theta)*dx + math.sin(theta)*dy
+            Yr = -math.sin(theta)*dx + math.cos(theta)*dy
+            Lf = math.hypot(Xr, Yr)
+
+            # Reject if too lateral or behind
+            if abs(Yr) > 2.0 or Xr < 0.2:
+                print(f"[SKIP] Lookahead point too lateral or behind: Xr={Xr:.2f}, Yr={Yr:.2f}")
+                await asyncio.sleep(0.1)
+                continue
+
+            # Final waypoint exception: allow it even if behind
+            if i == len(TARGETS) - 1:
                 lookahead_point = (wp_lat, wp_lon)
                 break
 
-        # If no lookahead point found, use last waypoint
+            if Xr > 0.2 and abs(Yr) < 5.0 and Lf >= LOOKAHEAD_DISTANCE:
+                lookahead_point = (wp_lat, wp_lon)
+                break
+
         if not lookahead_point:
             lookahead_point = TARGETS[-1]
-
-        target_lat, target_lon = lookahead_point
-        dist = haversine_distance(lat, lon, target_lat, target_lon)
-        bearing = bearing_deg(lat, lon, target_lat, target_lon)
-
-        if bearing > 180:
-            bearing -= 360
-        diff = angle_diff_deg(bearing, yaw)
-
-        print_data("auto", f"Waypoint {current_target_idx+1}/{len(TARGETS)} | ", diff)
+            print("[LOOKAHEAD] No forward-looking waypoint found. Using last target.")
 
 
-        if dist < WAYPOINT_RADIUS: #WAYPOINT_RADIUS: #0.5 was original, prior to WAYPOINT_RADIUS. Using for baseline. Buffer radius
-            print(f"[AUTO] 🎯 Reached waypoint {current_target_idx + 1} within {WAYPOINT_RADIUS:.2f}m buffer")
-            current_target_idx += 1
-            continue
 
-        # === Smart turning (dynamic turning speed) ===
+
+
+        # Pure pursuit curvature computation
+        alpha = math.atan2(Yr, Xr)
+        Lf = math.hypot(Xr, Yr)
+        curvature = 2 * math.sin(alpha) / max(Lf, 1e-3)
+
         base_speed = SPEED_LEVELS[speed_index]
+        omega = curvature * base_speed *0.6
 
-        if abs(diff) > 10:
-            cmd = "d" if diff > 0 else "a"
-            # Slow turning — reduce speed while turning
-            turn_speed = max(0.1, base_speed * 0.4)
-            print(f"[AUTO] 🔄 Turning | Δ={abs(diff):.2f}° | Turn Speed={turn_speed:.2f} | Command={cmd}")
-            await ws.send(f"{turn_speed:.2f}")  # Send speed
-            await ws.send(cmd)                  # Send turn direction
-        else:
-            cmd = "w"
-            print(f"[AUTO] 🚀 Moving forward at speed {base_speed:.2f}")
-            await ws.send(f"{base_speed:.2f}")  # Send speed
-            await ws.send(cmd)                  # Send move command
+        omega_history.append(omega)
+        if len(omega_history) > 3:
+            omega_history.pop(0)
+        omega = sum(omega_history) / len(omega_history)
+
+        MAX_OMEGA = 1.0
+        if abs(omega) < 0.05:
+            omega = 0.0
+        omega = max(min(omega, MAX_OMEGA), -MAX_OMEGA)
+        # Print debug information
+        print(f"[Pursuit] Xr={Xr:.2f}, Yr={Yr:.2f}, α={math.degrees(alpha):.2f}, Lf={Lf:.2f}, curvature={curvature:.4f}, ω={omega:.3f}")
+
+        print_data("auto", f"Waypoint {current_target_idx+1}/{len(TARGETS)} | ", omega)
+        # Send nav command via websocket
+        command = f"v{base_speed:.2f}w{omega:.2f}"
+        await ws.send(command)
+
+        # Waypoint progress
+        dist_to_wp = haversine_distance(lat, lon, *TARGETS[current_target_idx])
+        # Slow down as we approach the target
+        if dist_to_wp < 1.5 * WAYPOINT_RADIUS:
+            # Linearly scale speed down
+            scale = max(dist_to_wp / (1.5 * WAYPOINT_RADIUS), 0.1)
+            base_speed *= scale
+            print(f"[BRAKE] Scaling speed near waypoint: scale={scale:.2f}, speed={base_speed:.2f}")
+
+        if dist_to_wp < WAYPOINT_RADIUS:
+            current_target_idx += 1
+            if current_target_idx >= len(TARGETS):
+                print("✅ Reached final waypoint. Stopping.")
+                await ws.send("v0.00w0.00")
+                break
+
 
         await asyncio.sleep(0.5)
+
 
 # ======================
 # Keyboard control task
