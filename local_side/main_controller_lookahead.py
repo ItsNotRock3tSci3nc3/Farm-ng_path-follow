@@ -17,7 +17,7 @@ from imu_bno085_receiver import IMUReader
 
 from CSVLogger import CSVLogger
 
-test_name = "robot_track_lookahead" #CHANGE BEFORE TESTING
+test_name = "robot_track_lookahead_10mSeg" #CHANGE BEFORE TESTING
 logging = input("Enable logging(y/n)? Press Enter to continue\n")
 if logging.lower() == "y" or logging.lower() == "yes":
     csv_logger = CSVLogger(f"{test_name}.csv", True)
@@ -35,7 +35,7 @@ TARGET_LAT = 38.94123854
 TARGET_LON = -92.31853863600745
 
 # === Coordinate buffer radius ===
-WAYPOINT_RADIUS = 2.0  # meters (adjust as needed)
+WAYPOINT_RADIUS = 1.0  # meters (adjust as needed)
 
 
 # === Mode and speed levels ===
@@ -45,8 +45,9 @@ speed_index = 2
 last_record_time = 0
 
 # === lookahead distance ===
-LOOKAHEAD_DISTANCE = SPEED_LEVELS[speed_index] * 3.0  # e.g. 0.6 → 1.8m
-LOOKAHEAD_DISTANCE = max(1.2, min(4.0, LOOKAHEAD_DISTANCE))
+#LOOKAHEAD_DISTANCE = SPEED_LEVELS[speed_index] * 3.0  # e.g. 0.6 → 1.8m
+#LOOKAHEAD_DISTANCE = max(1.2, min(4.0, LOOKAHEAD_DISTANCE))
+LOOKAHEAD_DISTANCE = 0.8  # meters (adjust as needed)
 
 omega_history = []
 
@@ -72,10 +73,16 @@ TARGETS = [
 """
 Yard
 """
+# TARGETS = [
+# (38.941226778933206, -92.31878180426872),
+# (38.94113774185417, -92.31877807500175)
+# ]
 
 TARGETS = [
-(38.941226778933206, -92.31878180426872),
-(38.94113774185417, -92.31877807500175)
+
+(-92.31891656,	38.94126891),
+(-92.31887348,	38.9412354),
+(-92.31855036,	38.94123726)
 ]
 
 
@@ -123,7 +130,7 @@ def _get_yaw():
 
     filtered_yaw = yaw_filter.update(raw_yaw, yaw_accuracy)
     # ✅ Invert yaw to correct flipped IMU direction
-    corrected_yaw = filtered_yaw
+    corrected_yaw = -filtered_yaw
 
     # Optional: normalize to [-180, 180] just in case
     if corrected_yaw > 180:
@@ -189,6 +196,21 @@ def map_angle_to_speed(diff_deg):
     abs_diff = min(abs(diff_deg), 90.0)
     speed = 0.1 + 0.8 * (abs_diff / 90.0) ** 1.5 
     return round(min(speed, 0.9), 2)
+def transform_to_robot_frame(wp_lat, wp_lon, robot_lat, robot_lon, yaw_deg):
+    # Constants
+    LAT_TO_M = 111000  # meters per degree latitude
+    LON_TO_M = 111000 * math.cos(math.radians(robot_lat))  # meters per degree longitude
+
+    # Global delta (world frame)
+    dx = (wp_lon - robot_lon) * LON_TO_M  # East
+    dy = (wp_lat - robot_lat) * LAT_TO_M  # North
+
+    # Convert to robot frame (yaw is heading, CCW from East)
+    yaw_rad = math.radians(yaw_deg)
+    Xr = math.cos(yaw_rad) * dx + math.sin(yaw_rad) * dy
+    Yr = -math.sin(yaw_rad) * dx + math.cos(yaw_rad) * dy
+
+    return Xr, Yr
 
 async def nav_task(ws):
     global current_target_idx
@@ -208,31 +230,30 @@ async def nav_task(ws):
             await asyncio.sleep(1)
             continue
 
-        # Constants for projection
         LAT_TO_M = 111000
         LON_TO_M = 111000 * math.cos(math.radians(lat))
-        theta = math.radians(yaw)
+        yaw_rad = math.radians(yaw)
 
         lookahead_point = None
         for i in range(current_target_idx, len(TARGETS)):
             wp_lat, wp_lon = TARGETS[i]
             dx = (wp_lon - lon) * LON_TO_M
             dy = (wp_lat - lat) * LAT_TO_M
-            Xr = math.cos(theta)*dx + math.sin(theta)*dy
-            Yr = -math.sin(theta)*dx + math.cos(theta)*dy
-            Lf = math.hypot(Xr, Yr)
 
-            # Reject if too lateral or behind
-            if abs(Yr) > 2.0 or Xr < 0.2:
-                print(f"[SKIP] Lookahead point too lateral or behind: Xr={Xr:.2f}, Yr={Yr:.2f}")
+            # ✅ Transform to robot frame
+            Xr = math.sin(yaw_rad) * dx + math.cos(yaw_rad) * dy
+            Yr = -math.cos(yaw_rad) * dx + math.sin(yaw_rad) * dy
+
+            if Xr < 0.2:
+                print(f"[LOOKAHEAD SKIP] Lookahead point too lateral or behind: Xr={Xr:.2f}, Yr={Yr:.2f}")
                 await asyncio.sleep(0.1)
                 continue
 
-            # Final waypoint exception: allow it even if behind
             if i == len(TARGETS) - 1:
                 lookahead_point = (wp_lat, wp_lon)
                 break
 
+            Lf = math.hypot(Xr, Yr)
             if Xr > 0.2 and abs(Yr) < 5.0 and Lf >= LOOKAHEAD_DISTANCE:
                 lookahead_point = (wp_lat, wp_lon)
                 break
@@ -241,43 +262,45 @@ async def nav_task(ws):
             lookahead_point = TARGETS[-1]
             print("[LOOKAHEAD] No forward-looking waypoint found. Using last target.")
 
+        wp_lat, wp_lon = lookahead_point
+        dx = (wp_lon - lon) * LON_TO_M
+        dy = (wp_lat - lat) * LAT_TO_M
 
+        # ✅ Transform again using correct yaw
+        Xr = math.sin(yaw_rad) * dx + math.cos(yaw_rad) * dy
+        Yr = -math.cos(yaw_rad) * dx + math.sin(yaw_rad) * dy
 
-
-
-        # Pure pursuit curvature computation
         alpha = math.atan2(Yr, Xr)
         Lf = math.hypot(Xr, Yr)
         curvature = 2 * math.sin(alpha) / max(Lf, 1e-3)
 
         base_speed = SPEED_LEVELS[speed_index]
-        omega = curvature * base_speed *0.6
+        omega = curvature * base_speed * 1.6  # no negative flip here!
 
-        omega_history.append(omega)
-        if len(omega_history) > 3:
-            omega_history.pop(0)
-        omega = sum(omega_history) / len(omega_history)
+        #omega_history.append(omega)
+        #if len(omega_history) > 3:
+        #    omega_history.pop(0)
+        #omega = sum(omega_history) / len(omega_history)
 
         MAX_OMEGA = 1.0
         if abs(omega) < 0.05:
             omega = 0.0
         omega = max(min(omega, MAX_OMEGA), -MAX_OMEGA)
-        # Print debug information
-        print(f"[Pursuit] Xr={Xr:.2f}, Yr={Yr:.2f}, α={math.degrees(alpha):.2f}, Lf={Lf:.2f}, curvature={curvature:.4f}, ω={omega:.3f}")
 
-        print_data("auto", f"Waypoint {current_target_idx+1}/{len(TARGETS)} | ", omega)
-        # Send nav command via websocket
         command = f"v{base_speed:.2f}w{omega:.2f}"
-        await ws.send(command)
 
-        # Waypoint progress
         dist_to_wp = haversine_distance(lat, lon, *TARGETS[current_target_idx])
-        # Slow down as we approach the target
         if dist_to_wp < 1.5 * WAYPOINT_RADIUS:
-            # Linearly scale speed down
             scale = max(dist_to_wp / (1.5 * WAYPOINT_RADIUS), 0.1)
             base_speed *= scale
             print(f"[BRAKE] Scaling speed near waypoint: scale={scale:.2f}, speed={base_speed:.2f}")
+
+        auto_data = f"Xr = {Xr:.2f}, Yr = {Yr:.2f}, α = {math.degrees(alpha):.2f}, Lf = {Lf:.2f}, curvature = {curvature:.4f}, ω = {omega:.3f}"
+        #print(f"Robot GPS: ({lat:.6f}, {lon:.6f}) | Yaw = {yaw:.2f}° (accuracy={yaw_acc:.2f})")
+        #print(f"Target WP : ({wp_lat:.6f}, {wp_lon:.6f})")
+        #print(f"Xr = {Xr:.2f}, Yr = {Yr:.2f}, alpha = {math.degrees(alpha):.2f}, curvature = {curvature:.3f}, ω = {omega:.2f}")
+        print_data("auto", f"Waypoint {current_target_idx+1}/{len(TARGETS)} | {auto_data}\n")
+        await ws.send(command)
 
         if dist_to_wp < WAYPOINT_RADIUS:
             current_target_idx += 1
@@ -286,8 +309,8 @@ async def nav_task(ws):
                 await ws.send("v0.00w0.00")
                 break
 
+        await asyncio.sleep(0.2)
 
-        await asyncio.sleep(0.5)
 
 
 # ======================
