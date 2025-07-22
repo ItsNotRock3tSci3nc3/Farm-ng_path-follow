@@ -11,13 +11,14 @@ import websockets
 import pygame
 import time
 import datetime
+import traceback
 
 from gps_reader import get_latest_fix 
 from imu_bno085_receiver import IMUReader
 
 from CSVLogger import CSVLogger
 
-test_name = "robot_track_lookahead_10mSeg" #CHANGE BEFORE TESTING
+test_name = "robot_track_lookahead_10mSeg_RS2Test" #CHANGE BEFORE TESTING
 logging = input("Enable logging(y/n)? Press Enter to continue\n")
 if logging.lower() == "y" or logging.lower() == "yes":
     csv_logger = CSVLogger(f"{test_name}.csv", True)
@@ -35,7 +36,7 @@ TARGET_LAT = 38.94123854
 TARGET_LON = -92.31853863600745
 
 # === Coordinate buffer radius ===
-WAYPOINT_RADIUS = 1.0  # meters (adjust as needed)
+WAYPOINT_RADIUS = 2.0  # meters (adjust as needed)
 
 
 # === Mode and speed levels ===
@@ -45,9 +46,9 @@ speed_index = 2
 last_record_time = 0
 
 # === lookahead distance ===
-#LOOKAHEAD_DISTANCE = SPEED_LEVELS[speed_index] * 3.0  # e.g. 0.6 → 1.8m
-#LOOKAHEAD_DISTANCE = max(1.2, min(4.0, LOOKAHEAD_DISTANCE))
-LOOKAHEAD_DISTANCE = 0.8  # meters (adjust as needed)
+LOOKAHEAD_DISTANCE = SPEED_LEVELS[speed_index] * 3.0  # e.g. 0.6 → 1.8m
+LOOKAHEAD_DISTANCE = max(1.2, min(4.0, LOOKAHEAD_DISTANCE))
+#LOOKAHEAD_DISTANCE = 1  # meters (adjust as needed)
 
 omega_history = []
 
@@ -80,9 +81,9 @@ Yard
 
 TARGETS = [
 
-(-92.31891656,	38.94126891),
-(-92.31887348,	38.9412354),
-(-92.31855036,	38.94123726)
+(38.94126891,-92.31891656),
+(38.9412354, -92.31887348),
+(38.94121944,-92.31863472)
 ]
 
 
@@ -196,21 +197,16 @@ def map_angle_to_speed(diff_deg):
     abs_diff = min(abs(diff_deg), 90.0)
     speed = 0.1 + 0.8 * (abs_diff / 90.0) ** 1.5 
     return round(min(speed, 0.9), 2)
-def transform_to_robot_frame(wp_lat, wp_lon, robot_lat, robot_lon, yaw_deg):
-    # Constants
-    LAT_TO_M = 111000  # meters per degree latitude
-    LON_TO_M = 111000 * math.cos(math.radians(robot_lat))  # meters per degree longitude
 
-    # Global delta (world frame)
-    dx = (wp_lon - robot_lon) * LON_TO_M  # East
-    dy = (wp_lat - robot_lat) * LAT_TO_M  # North
+def nonlinear_omega(curvature, base_speed):
+    gain = 1.6
+    if math.isnan(curvature):
+        print("[AUTO WARN] NaN curvature in omega")
+        return 0.0
+    adjusted = math.copysign(abs(curvature) ** 0.5, curvature)
+    return adjusted * base_speed * gain
 
-    # Convert to robot frame (yaw is heading, CCW from East)
-    yaw_rad = math.radians(yaw_deg)
-    Xr = math.cos(yaw_rad) * dx + math.sin(yaw_rad) * dy
-    Yr = -math.sin(yaw_rad) * dx + math.cos(yaw_rad) * dy
 
-    return Xr, Yr
 
 async def nav_task(ws):
     global current_target_idx
@@ -254,13 +250,15 @@ async def nav_task(ws):
                 break
 
             Lf = math.hypot(Xr, Yr)
+            #Lf = min(max(distance_to_waypoint * 0.4, 2.0), 8.0)
+
             if Xr > 0.2 and abs(Yr) < 5.0 and Lf >= LOOKAHEAD_DISTANCE:
                 lookahead_point = (wp_lat, wp_lon)
                 break
 
         if not lookahead_point:
             lookahead_point = TARGETS[-1]
-            print("[LOOKAHEAD] No forward-looking waypoint found. Using last target.")
+            print("[LOOKAHEAD WARN] No forward-looking waypoint found. Using last target.")
 
         wp_lat, wp_lon = lookahead_point
         dx = (wp_lon - lon) * LON_TO_M
@@ -272,10 +270,18 @@ async def nav_task(ws):
 
         alpha = math.atan2(Yr, Xr)
         Lf = math.hypot(Xr, Yr)
+
+        if Lf < 1e-3 or math.isnan(Lf):
+            print("[LOOKAHEAD WARN] Very small or invalid Lf, skipping this cycle")
+            await asyncio.sleep(0.1)
+            continue
+
+
         curvature = 2 * math.sin(alpha) / max(Lf, 1e-3)
 
         base_speed = SPEED_LEVELS[speed_index]
-        omega = curvature * base_speed * 1.6  # no negative flip here!
+        #omega = curvature * base_speed * 1.6  # no negative flip here!
+        omega = nonlinear_omega(curvature, base_speed)
 
         #omega_history.append(omega)
         #if len(omega_history) > 3:
@@ -283,8 +289,8 @@ async def nav_task(ws):
         #omega = sum(omega_history) / len(omega_history)
 
         MAX_OMEGA = 1.0
-        if abs(omega) < 0.05:
-            omega = 0.0
+        #if abs(omega) < 0.05:
+        #    omega = 0.0
         omega = max(min(omega, MAX_OMEGA), -MAX_OMEGA)
 
         command = f"v{base_speed:.2f}w{omega:.2f}"
@@ -294,6 +300,8 @@ async def nav_task(ws):
             scale = max(dist_to_wp / (1.5 * WAYPOINT_RADIUS), 0.1)
             base_speed *= scale
             print(f"[BRAKE] Scaling speed near waypoint: scale={scale:.2f}, speed={base_speed:.2f}")
+        else:
+            scale = 1.0
 
         auto_data = f"Xr = {Xr:.2f}, Yr = {Yr:.2f}, α = {math.degrees(alpha):.2f}, Lf = {Lf:.2f}, curvature = {curvature:.4f}, ω = {omega:.3f}"
         #print(f"Robot GPS: ({lat:.6f}, {lon:.6f}) | Yaw = {yaw:.2f}° (accuracy={yaw_acc:.2f})")
@@ -455,18 +463,33 @@ def fmt(val, precision=None):
 # Main entry
 # ======================
 async def main():
-    uri = "ws://100.87.161.11:8555"  # Replace with your robot IP
-    print(f"🚀 Connecting to robot at {uri}")
-    async with websockets.connect(uri) as ws:
-        await asyncio.gather(
-            nav_task(ws),
-            keyboard_task(ws),
-            csv_logging_task(get_filtered_gps, _get_yaw, csv_logger)
-        )
+    while True:
+        try:
+            # Replace with your actual robot's WebSocket URI
+            ws_uri = "ws://100.87.161.11:8555"
+            print(f"[MAIN] Connecting to {ws_uri}...")
+            async with websockets.connect(ws_uri) as ws:
+                print("[MAIN] Connected. Starting tasks...")
+                await asyncio.gather(
+                    nav_task(ws),
+                    keyboard_task(ws),
+                    csv_logging_task(get_filtered_gps, _get_yaw, csv_logger)
+                )
+
+        except websockets.exceptions.ConnectionClosedError as e:
+            print(f"[WEBSOCKET ERROR] Connection lost: {e}. Reconnecting in 3s...")
+            traceback.print_exc()
+            await asyncio.sleep(3)
+
+        except Exception as e:
+            print(f"[CONTROLLER] Unexpected error: {e}")
+            traceback.print_exc()
+            await asyncio.sleep(3)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except Exception as e:
-        print(f"[CONTROLLER] Error: {e}\n{e.__annotations__}\n{e.__traceback__}")
+        print(f"[CONTROLLER] Error: {e}\n{traceback.format_exc()}")
 
+#ws://100.87.161.11:8555
