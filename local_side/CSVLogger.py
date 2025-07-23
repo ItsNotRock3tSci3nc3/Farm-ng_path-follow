@@ -4,7 +4,7 @@ from pathlib import Path
 from datetime import datetime
 
 class CSVLogger:
-    def __init__(self, filename="robot_track", logging = True):
+    def __init__(self, filename= None, logging = True):
         self.logging = logging
         if self.logging:
             self.file = open(filename, "w", newline='')
@@ -33,13 +33,13 @@ class CSVLogger:
         self.file = open(self.filename, "w", newline='')
         self.writer = csv.writer(self.file)
 
-        self.writer.writerow(["timestamp", "distance", "latitude", "longitude", "yaw", "yaw precision", "heading", "delta", "precision"])
+        self.writer.writerow(["timestamp", "Robot state", "Time difference", "distance", "latitude", "longitude", "RTK precision", "yaw", "yaw precision", "Speed", "heading", "delta", "Xr", "Yr", "Curvature", "Omega"])
         print(f"[CSVLogger] Logging to {self.filename}")
 
-    def add_point(self, time, dist, lon, lat, yaw, yaw_acc, bearing, delta=None, prec=None):
+    def add_point(self, time = None, state = None, time_diff = None, dist = None, lon = None, lat = None, prec = None, yaw = None, yaw_acc = None, speed = None, bearing = None, delta = None, Xr = None, Yr = None, curvature = None, omega = None):
         if not self.logging:
             return
-        self.writer.writerow([time, dist, lat, lon, yaw, yaw_acc, bearing, delta, prec])
+        self.writer.writerow([time, state, time_diff, dist, lat, lon, prec, yaw, yaw_acc, speed, bearing, delta, Xr, Yr, curvature, omega])
 
     def close(self):
         if not self.logging:

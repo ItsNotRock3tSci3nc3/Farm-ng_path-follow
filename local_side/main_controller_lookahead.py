@@ -55,6 +55,7 @@ omega_history = []
 # === IMU reader instance ===
 imu_reader = IMUReader()
 
+
 # === List of navigation targets (latitude, longitude) ===
 # come way
 #TARGETS = [(38.90764031, -92.26851491),(38.90768574, -92.26833880),(38.90775425, -92.26808159),(38.90780484, -92.26789371)]
@@ -199,14 +200,37 @@ def map_angle_to_speed(diff_deg):
     return round(min(speed, 0.9), 2)
 
 def nonlinear_omega(curvature, base_speed):
-    gain = 1.6
+    #Gain is used to adjust the reaction speed of the robot to curvature. More gain means more reaction speed, and the opposite is true.
+    # Increase gain to keep robot on track for tighter turns, decrease if there is too much oscillation
+    gain = 1.6 
+
     if math.isnan(curvature):
         print("[AUTO WARN] NaN curvature in omega")
         return 0.0
     adjusted = math.copysign(abs(curvature) ** 0.5, curvature)
     return adjusted * base_speed * gain
 
+def get_robot_frame(dx, dy, yaw_rad):
+    # Transform coordinates to robot frame
+    Xr = math.sin(yaw_rad) * dx + math.cos(yaw_rad) * dy
+    Yr = -math.cos(yaw_rad) * dx + math.sin(yaw_rad) * dy
+    return Xr, Yr
 
+def check_lookahead_point(Xr, Yr, Lf, lookahead_point, wp_lat, wp_lon):
+    if Xr < 0.2:
+        print(f"[LOOKAHEAD SKIP] Lookahead point too lateral or behind: Xr={Xr:.2f}, Yr={Yr:.2f}")
+        return False
+    if abs(Yr) > 5.0:
+        print(f"[LOOKAHEAD SKIP] Lookahead point too far off track: Xr={Xr:.2f}, Yr={Yr:.2f}")
+        lookahead_point = (wp_lat, wp_lon)
+    if Xr > 0.2 and abs(Yr) < 5.0 and Lf >= LOOKAHEAD_DISTANCE:
+        lookahead_point = (wp_lat, wp_lon)
+        
+    return True
+
+GET_CURVATURE = None
+GET_OMEGA = None
+GET_SPEED = None
 
 async def nav_task(ws):
     global current_target_idx
@@ -237,13 +261,18 @@ async def nav_task(ws):
             dy = (wp_lat - lat) * LAT_TO_M
 
             # ✅ Transform to robot frame
-            Xr = math.sin(yaw_rad) * dx + math.cos(yaw_rad) * dy
-            Yr = -math.cos(yaw_rad) * dx + math.sin(yaw_rad) * dy
+            Xr, Yr = get_robot_frame(dx, dy, yaw_rad)
 
+
+            if not check_lookahead_point(Xr, Yr, Lf, lookahead_point, wp_lat, wp_lon): #check if lookahead point is valid, if not it will skip
+                continue
+
+            """
             if Xr < 0.2:
                 print(f"[LOOKAHEAD SKIP] Lookahead point too lateral or behind: Xr={Xr:.2f}, Yr={Yr:.2f}")
                 await asyncio.sleep(0.1)
                 continue
+            """
 
             if i == len(TARGETS) - 1:
                 lookahead_point = (wp_lat, wp_lon)
@@ -251,10 +280,12 @@ async def nav_task(ws):
 
             Lf = math.hypot(Xr, Yr)
             #Lf = min(max(distance_to_waypoint * 0.4, 2.0), 8.0)
-
+            """
             if Xr > 0.2 and abs(Yr) < 5.0 and Lf >= LOOKAHEAD_DISTANCE:
                 lookahead_point = (wp_lat, wp_lon)
                 break
+            """
+            
 
         if not lookahead_point:
             lookahead_point = TARGETS[-1]
@@ -265,8 +296,9 @@ async def nav_task(ws):
         dy = (wp_lat - lat) * LAT_TO_M
 
         # ✅ Transform again using correct yaw
-        Xr = math.sin(yaw_rad) * dx + math.cos(yaw_rad) * dy
-        Yr = -math.cos(yaw_rad) * dx + math.sin(yaw_rad) * dy
+        #Xr = math.sin(yaw_rad) * dx + math.cos(yaw_rad) * dy
+        #Yr = -math.cos(yaw_rad) * dx + math.sin(yaw_rad) * dy
+        Xr, Yr = get_robot_frame(dx, dy, yaw_rad)
 
         alpha = math.atan2(Yr, Xr)
         Lf = math.hypot(Xr, Yr)
@@ -276,13 +308,21 @@ async def nav_task(ws):
             await asyncio.sleep(0.1)
             continue
 
-
+        # Curavature corresponds to the radius of the circle that the robot is following
+        # Curvature is defined as 2 * sin(alpha) / Lf
+        # negative curvature means the robot needs to turn left, positive curvature means right
         curvature = 2 * math.sin(alpha) / max(Lf, 1e-3)
+        GET_CURVATURE = curvature
 
         base_speed = SPEED_LEVELS[speed_index]
-        #omega = curvature * base_speed * 1.6  # no negative flip here!
-        omega = nonlinear_omega(curvature, base_speed)
+        GET_SPEED = base_speed
+        #omega = curvature * base_speed * 1.6
 
+        #Calculate omega using nonlinear function based on curvature
+        omega = nonlinear_omega(curvature, base_speed)
+        GET_OMEGA = omega
+
+        #Omega smoothing
         #omega_history.append(omega)
         #if len(omega_history) > 3:
         #    omega_history.pop(0)
@@ -293,8 +333,12 @@ async def nav_task(ws):
         #    omega = 0.0
         omega = max(min(omega, MAX_OMEGA), -MAX_OMEGA)
 
+        # Command format: v<speed>w<omega>
+        # Sends command to robot as velocity and angular velocity
         command = f"v{base_speed:.2f}w{omega:.2f}"
 
+        # Check distance to waypoint and scale speed if close to waypoint
+        # This is to prevent overshooting the waypoint and increased accuracy
         dist_to_wp = haversine_distance(lat, lon, *TARGETS[current_target_idx])
         if dist_to_wp < 1.5 * WAYPOINT_RADIUS:
             scale = max(dist_to_wp / (1.5 * WAYPOINT_RADIUS), 0.1)
@@ -304,9 +348,12 @@ async def nav_task(ws):
             scale = 1.0
 
         auto_data = f"Xr = {Xr:.2f}, Yr = {Yr:.2f}, α = {math.degrees(alpha):.2f}, Lf = {Lf:.2f}, curvature = {curvature:.4f}, ω = {omega:.3f}"
+        
+        #debug 
         #print(f"Robot GPS: ({lat:.6f}, {lon:.6f}) | Yaw = {yaw:.2f}° (accuracy={yaw_acc:.2f})")
         #print(f"Target WP : ({wp_lat:.6f}, {wp_lon:.6f})")
         #print(f"Xr = {Xr:.2f}, Yr = {Yr:.2f}, alpha = {math.degrees(alpha):.2f}, curvature = {curvature:.3f}, ω = {omega:.2f}")
+
         print_data("auto", f"Waypoint {current_target_idx+1}/{len(TARGETS)} | {auto_data}\n")
         await ws.send(command)
 
@@ -390,7 +437,7 @@ async def keyboard_task(ws):
 # ======================
 # CSV Logging task
 # ======================
-async def csv_logging_task(get_pos_func, get_yaw, csv_logger):
+async def csv_logging_task(get_pos_func, get_yaw, robot_frame, curvature, omega, speed, csv_logger):
     try:
         while True:
             pos = get_pos_func()
@@ -411,10 +458,17 @@ async def csv_logging_task(get_pos_func, get_yaw, csv_logger):
                 if bearing > 180:
                     bearing -= 360
 
+                Xr, Yr = robot_frame(lat, lon, yaw)
+                curvature = GET_CURVATURE
+                omega = GET_OMEGA
+                speed = GET_SPEED
+
                 UNIX_TIMESTAMP = time.time()  # Use a consistent timestamp for all points
                 timestamp_converted = datetime.datetime.fromtimestamp(UNIX_TIMESTAMP)
-                csv_logger.add_point(timestamp_converted, dist, lon, lat, yaw, yaw_acc, bearing, diff, precision)
-            await asyncio.sleep(1)
+
+                # time difference not setup yet
+                time_diff = None
+                csv_logger.add_point(timestamp_converted, mode, time_diff, dist, lon, lat, precision, yaw, yaw_acc, speed, bearing, diff, Xr, Yr, curvature, omega)
     finally:
         csv_logger.close()
 
@@ -464,6 +518,7 @@ def fmt(val, precision=None):
 # ======================
 async def main():
     while True:
+        start_time = time.time()
         try:
             # Replace with your actual robot's WebSocket URI
             ws_uri = "ws://100.87.161.11:8555"
@@ -473,7 +528,7 @@ async def main():
                 await asyncio.gather(
                     nav_task(ws),
                     keyboard_task(ws),
-                    csv_logging_task(get_filtered_gps, _get_yaw, csv_logger)
+                    csv_logging_task(_get_latest_fix, _get_yaw, csv_logger)
                 )
 
         except websockets.exceptions.ConnectionClosedError as e:
