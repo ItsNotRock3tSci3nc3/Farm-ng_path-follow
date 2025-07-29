@@ -62,7 +62,7 @@ This project is divided into two modules:
 
 ## 🛠️ Startup Instructions
 
-##### NOTE: `remote_connect.sh` can automatically ssh into the farm-ng and change the directory to robot_side automatically. Make sure to create and update `farm-ng.txt` with the appropriate user, host, and IP. be sure to keep `farm-ng.txt` in the same file level as `remote_connect.sh`
+##### NOTE: `remote_connect.sh` can ssh into the farm-ng and change the directory to robot_side automatically. Make sure to create and update `farm-ng.txt` with the appropriate user, host, and IP. be sure to keep `farm-ng.txt` in the same file level as `remote_connect.sh`
 
 ### Robot Side without lookahead
 
@@ -78,7 +78,7 @@ This will run:
 
 ---
 
-### Local Side
+### Local Side without lookahead
 
 ```bash
 cd local_side
@@ -108,7 +108,7 @@ This will run:
 
 ---
 
-### Local Side
+### Local Side with lookahead
 
 ```bash
 cd local_side
