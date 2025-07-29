@@ -15,16 +15,18 @@ This project is divided into two modules:
 │   ├── gps_reader.py                # Reads GPS coordinates from the RTK module
 │   ├── imu_bno085_receiver.py       # Reads BNO085 orientation data from ESP32
 │   ├── main_controller.py           # Main navigation controller: fuses GPS+IMU and sends control commands
+|   ├── main_controller_lookahead.py # Main navigation controller, same as main_controller but with lookahead capabilities.
 │   ├── service_config.json          # FarmNG CAN bus configuration file
 │   ├── docker-compose.yml / Dockerfile
 │   └── start.sh / run.sh            # Startup scripts
 │
 ├── robot_side
-│   ├── controller_receiver.py       # WebSocket service: receives remote control commands
-│   ├── main_robot.py                # Starts robot-side functions (e.g., motor control)
-│   ├── service_config.json          # FarmNG configuration
+│   ├── controller_receiver.py/controller_receiver_lookahead.py       # WebSocket service: receives remote control commands
+│   ├── main_robot.py                                                 # Starts robot-side functions (e.g., motor control)
+|   ├── main_robot_lookahead.py                                       # Starts robot-side functions (e.g., motor control) and can receive velocity and angular velocity inputs
+│   ├── service_config.json                                           # FarmNG configuration
 │   ├── docker-compose.yml / Dockerfile
-│   └── start.sh / run.sh            # Startup scripts
+│   └── start.sh / run.sh                                             # Startup scripts
 
 ```
 
@@ -44,13 +46,13 @@ This project is divided into two modules:
    * Calculate target direction and movement commands (e.g., turn first, then move forward)
 3. **Send Control**
 
-   * Send control commands (such as `w`, `a`, `s`, `d`) to Robot Side via WebSocket
+   * Send control commands (such as `w`, `a`, `s`, `d`, or if relevant velocity and angular velocity) to Robot Side via WebSocket
 
 ### 🤖 Robot Side (Execution)
 
 1. **Receive Control**
 
-   * Start `controller_receiver.py` to listen for control commands
+   * Start `controller_receiver.py` or `controller_receiver_lookahead.py` to listen for control commands
 2. **Execute Actions**
 
    * Control the robot to move forward, backward, turn, etc.
@@ -60,12 +62,12 @@ This project is divided into two modules:
 
 ## 🛠️ Startup Instructions
 
-### Robot Side
+### Robot Side without lookahead
 
 ```bash
 cd robot_side
 bash start.sh
-bash run.sh
+bash run.sh 
 ```
 
 This will run:
@@ -79,13 +81,46 @@ This will run:
 ```bash
 cd local_side
 bash start.sh
+python3 main_controller.py
 ```
 
 This will automatically run:
 
 * `gps_reader.py`: Listens to RTK
 * `imu_bno085_receiver.py`: Listens to ESP32 IMU
+
+And will start:
 * `main_controller.py`: Fuses and calculates navigation commands and sends controls
+
+### Robot Side with lookahead
+
+```bash
+cd robot_side
+bash start.sh
+bash run_lookahead.sh 
+```
+
+This will run:
+
+* `controller_receiver_lookahead.py`: Starts the WebSocket service and waits for control commands
+
+---
+
+### Local Side
+
+```bash
+cd local_side
+bash start.sh
+python3 main_controller_lookahead.py
+```
+
+This will automatically run:
+
+* `gps_reader.py`: Listens to RTK
+* `imu_bno085_receiver.py`: Listens to ESP32 IMU
+
+And will start:
+* `main_controller_lookahead.py`: Fuses and calculates navigation commands and sends controls, navigates at constant velocity via lookahead calculations
 
 
 

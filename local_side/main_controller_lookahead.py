@@ -32,8 +32,10 @@ from yaw_filter import YawFilter
 yaw_filter = YawFilter(alpha=0.7)  # Adjust alpha as needed
 
 # === Navigation target point ===
-TARGET_LAT = 38.94123854
-TARGET_LON = -92.31853863600745
+# NOTE: The values are are initialized to are meaningless, they will be updated by the navigation task
+TARGET_LAT = 38.90732879
+TARGET_LON = -92.26825423
+
 
 # === Coordinate buffer radius ===
 WAYPOINT_RADIUS = 2.0  # meters (adjust as needed)
