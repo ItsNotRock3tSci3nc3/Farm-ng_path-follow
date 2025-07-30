@@ -18,7 +18,7 @@ from imu_bno085_receiver import IMUReader
 
 from CSVLogger import CSVLogger
 
-test_name = "robot_track_lookahead_10mSeg" #CHANGE BEFORE TESTING
+test_name = "robot_track_lookahead_CustomSeg" #CHANGE BEFORE TESTING
 logging = input("Enable logging(y/n)? Press Enter to continue\n")
 if logging.lower() == "y" or logging.lower() == "yes":
     csv_logger = CSVLogger(f"{test_name}.csv", True)
@@ -52,6 +52,12 @@ LOOKAHEAD_DISTANCE = SPEED_LEVELS[speed_index] * 3.0  # e.g. 0.6 → 1.8m
 LOOKAHEAD_DISTANCE = max(1.2, min(4.0, LOOKAHEAD_DISTANCE))
 #LOOKAHEAD_DISTANCE = 1  # meters (adjust as needed)
 
+origin_lat = None
+origin_lon = None
+origin_initialized = False
+prev_lat = None
+prev_lon = None
+
 omega_history = []
 
 # === IMU reader instance ===
@@ -82,12 +88,59 @@ Yard
 # (38.94113774185417, -92.31877807500175)
 # ]
 
-TARGETS = [
+"""
+5m points
+-92.31891656	38.94126891
+-92.31887569	38.94123712
+-92.31887348	38.9412354
+-92.31881579	38.94123573
+-92.3187581	    38.94123606
+-92.31870041	38.9412364
+-92.31864272	38.94123673
+-92.31858503	38.94123706
 
+TARGETS = [
+    #(38.94126891, -92.31891656),
+    (38.94123712, -92.31887569),
+    (38.9412354, -92.31887348),
+    (38.94123573, -92.31881579),
+    (38.94123606, -92.3187581),
+    (38.9412364, -92.31870041),
+    (38.94123673, -92.31864272),
+    (38.94123706, -92.31858503)
+
+]
+"""
+
+
+"""
+10m points
+-92.31891656	38.94126891
+-92.31887348	38.9412354
+-92.3187581	38.94123606
+
+
+TARGETS = [
+    #(38.94126891, -92.31891656),
+    (38.9412354, -92.31887348),
+    (38.94123606, -92.3187581)
+]
+"""
+
+
+
+"""
+Yard test (custom)
+"""
+
+TARGETS = [
 #(38.94126891,-92.31891656),
 (38.9412354, -92.31887348),
-(34.94122941, -92.31864423) #(38.94121944,-92.31863472)
+(38.9412294, -92.31863472) #(38.94121944,-92.31863472)
 ]
+
+
+
 
 
 """
@@ -152,12 +205,17 @@ def _get_yaw_accuracy():
 # Heading/distance calculation utilities
 # ======================
 def haversine_distance(lat1, lon1, lat2, lon2):
-    R = 6371000  # Earth radius (meters)
+    """
+    Returns the great-circle distance in meters between two lat/lon points.
+    """
+    R = 6371000  # Earth radius in meters
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     d_phi = math.radians(lat2 - lat1)
     d_lambda = math.radians(lon2 - lon1)
-    a = math.sin(d_phi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(d_lambda/2)**2
-    return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
+
+    a = math.sin(d_phi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
 
 def bearing_deg(lat1, lon1, lat2, lon2):
     d_lon = math.radians(lon2 - lon1)
@@ -188,7 +246,14 @@ def get_filtered_gps():
     if pos is None:
         return None
     lat, lon = pos["lat"], pos["lon"]
+
     filtered_lat, filtered_lon = kf.update(lat, lon)
+
+    # Add strict validation here
+    if not (-90 <= filtered_lat <= 90) or not (-180 <= filtered_lon <= 180):
+        print(f"[GPS ERROR] Filtered GPS invalid: lat={filtered_lat}, lon={filtered_lon}")
+        return None
+
     pos["lat"] = filtered_lat
     pos["lon"] = filtered_lon
     return pos
@@ -232,6 +297,7 @@ def check_lookahead_point(Xr, Yr, Lf, wp_lat, wp_lon):
 
 
 
+
 async def nav_task(ws):
     global current_target_idx
     try:
@@ -240,7 +306,7 @@ async def nav_task(ws):
                 await asyncio.sleep(0.1)
                 continue
 
-            pos = _get_latest_fix()
+            pos = get_filtered_gps()
             yaw = _get_yaw()
             yaw_acc = _get_yaw_accuracy()
 
@@ -252,14 +318,24 @@ async def nav_task(ws):
             if precision > 2 or math.isnan(precision):
                 await asyncio.sleep(1)
                 continue
+            if prev_lat is not None and prev_lon is not None:
+                delta_meters = haversine_distance(prev_lat, prev_lon, lat, lon)
+                if delta_meters > 20:  # Tune this threshold if needed
+                    print(f"[GPS JUMP DETECTED] Δ={delta_meters:.2f} m — skipping")
+                    continue
 
             # === Position transform
             LAT_TO_M = 111000
             LON_TO_M = 111000 * math.cos(math.radians(lat))
+            if not (-90 <= lat <= 90):
+                print(f"[LON_TO_M ERROR] Invalid lat={lat}")
+                await asyncio.sleep(0.2)
+                continue
             yaw_rad = math.radians(yaw)
 
             lookahead_point = None
             for i in range(current_target_idx, len(TARGETS)):
+                TARGET_LAT, TARGET_LON = TARGETS[i]
                 wp_lat, wp_lon = TARGETS[i]
                 dx = (wp_lon - lon) * LON_TO_M
                 dy = (wp_lat - lat) * LAT_TO_M
@@ -284,6 +360,10 @@ async def nav_task(ws):
             dy = (wp_lat - lat) * LAT_TO_M
             Xr, Yr = get_robot_frame(dx, dy, yaw_rad)
             print(f"[AUTO] Xr = {Xr} Yr = {Yr}")
+            if abs(dx) > 500 or abs(dy) > 500:
+                print(f"[NAV ERROR] Unreasonable dx/dy: dx={dx:.2f}, dy={dy:.2f}")
+                await asyncio.sleep(0.2)
+                continue
 
             alpha = math.atan2(Yr, Xr)
             Lf = math.hypot(Xr, Yr)
@@ -311,7 +391,7 @@ async def nav_task(ws):
             try:
                 
                 await ws.send(command)
-                csv_logging_task(_get_latest_fix, _get_yaw, Xr, Yr, curvature, omega, base_speed, csv_logger)
+                csv_logging_task(get_filtered_gps, _get_yaw, Xr, Yr, curvature, omega, base_speed, csv_logger)
             except Exception as e:
                 print(f"[WEBSOCKET ERROR] Failed to send command: {e}")
                 break  # or continue/reconnect logic
@@ -486,16 +566,18 @@ def fmt(val, precision=None):
     except (ValueError, TypeError):
         return "None" 
 
+
+
 # ======================
 # Main entry
 # ======================
 
 #ping the webserver to automatically find the correct connection
-#necessary due to ip changing 
+#necessary due to ip changing (tailscale vs connection via router)
 from pythonping import ping
 def get_connection():
-    uri1 = "ws://100.87.161.11:8555"
-    uri2 = "ws://192.168.0.101:8555"
+    uri1 = "100.87.161.11"
+    uri2 = "192.168.0.101"
     try:
         response = ping(uri1, count=4, timeout=5)
         if response.success():
@@ -503,7 +585,7 @@ def get_connection():
             return uri1
         else:
             print(f"[CONNECTION CHECK] WebSocket server {uri1} is unreachable. Attempting connection to {uri2}")
-            reponse = ping(uri2, count=4, timeout=5)
+            response = ping(uri2, count=4, timeout=5)
             if response.success():
                 print(f"[CONNECTION CHECK] WebSocket server {uri2} is reachable.")
                 return uri2
@@ -515,12 +597,33 @@ def get_connection():
         return None
 
 async def main():
+    global origin_initialized, origin_lat, origin_lon
     while True:
-        start_time = time.time()
         try:
-            # Replace with your actual robot's WebSocket URI
-            ws_uri = get_connection()
+            fix = get_latest_fix()
+            if not fix:
+                continue
 
+            lat = fix["lat"]
+            lon = fix["lon"]
+            precision = fix["precision"]
+
+            # Require good fix before origin initialization
+            if not origin_initialized and precision is not None and precision < 2.0:
+                origin_lat = lat
+                origin_lon = lon
+                origin_initialized = True
+                print(f"[ORIGIN SET] lat={origin_lat}, lon={origin_lon}")
+                continue  # Skip first iteration
+
+            port = "8555"
+            ws_uri = get_connection()
+            if ws_uri == None:
+                print("[WS URI] URI is none, connection failed")
+                return 0
+            
+            ws_uri = f"ws://{ws_uri}:{port}"
+            print(f"[URI CHECK] {ws_uri}")
 
             print(f"[MAIN] Connecting to {ws_uri}...")
             async with websockets.connect(ws_uri) as ws:
@@ -545,4 +648,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[CONTROLLER] Error: {e}\n{traceback.format_exc()}")
 
-#ws://100.87.161.11:8555

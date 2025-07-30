@@ -17,20 +17,22 @@ if [ $? -eq 0 ]; then
     SELECT_HOST=1
 else
     echo "SSH connection to ${HOST} failed. Attempting to connect to ${HOST2}"
-    ssh -o BatchMode=yes -o ConnectTimeout=${TIMEOUT_SECONDS} $HOST exit &>/dev/null
+
+    ssh -o BatchMode=yes -o ConnectTimeout=${TIMEOUT_SECONDS} $HOST2 exit &>/dev/null
     if [ $? -eq 0 ]; then
         echo "SSH connection to ${HOST2} successful."
         SELECT_HOST=2
     else
-        echo "SSH connection to both hosts failed. Exiting."
-        exit 1
+        echo "SSH connection to both hosts failed."
     fi
 
 fi
 
-if SELECT_HOST=1; then
-    ssh -X -t "$HOST" "cd robot_side && exec bash && echo 'Debugging connection to $HOST complete.'"
-elif SELECT_HOST=2; then
-    ssh -X -t "$HOST2" "cd robot_side && exec bash && echo 'Debugging connection to $HOST2 complete.'"
+if [[ "SELECT_HOST" -eq 1 ]]; then
+    echo "connecting to ${HOST}"
+    ssh -X -t "$HOST" "cd robot_side && exec bash"
+elif [[ "SELECT_HOST" -eq 2 ]]; then
+    echo "connecting to ${HOST2}"
+    ssh -X -t "$HOST2" "cd robot_side && exec bash"
 fi
 

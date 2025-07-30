@@ -36,7 +36,7 @@ class CSVLogger:
         self.writer.writerow(["timestamp", "Robot state", "Time difference", "distance", "latitude", "longitude", "RTK precision", "yaw", "yaw precision", "Speed", "heading", "delta", "Xr", "Yr", "Curvature", "Omega"])
         print(f"[CSVLogger] Logging to {self.filename}")
 
-    def add_point(self, time = None, state = None, time_diff = None, dist = None, lon = None, lat = None, prec = None, yaw = None, yaw_acc = None, speed = None, bearing = None, delta = None, Xr = None, Yr = None, curvature = None, omega = None):
+    def add_point(self, time = "NULL", state = "NULL", time_diff = "NULL", dist = 0, lon = 0, lat = 0, prec = 0, yaw = 0, yaw_acc = -1, speed = -1, bearing = -1, delta = 0, Xr = 0, Yr = 0, curvature = 0, omega = 0):
         if not self.logging:
             return
         self.writer.writerow([time, state, time_diff, dist, lat, lon, prec, yaw, yaw_acc, speed, bearing, delta, Xr, Yr, curvature, omega])
