@@ -489,15 +489,41 @@ def fmt(val, precision=None):
 # ======================
 # Main entry
 # ======================
+
+#ping the webserver to automatically find the correct connection
+#necessary due to ip changing 
+from pythonping import ping
+def get_connection():
+    uri1 = "ws://100.87.161.11:8555"
+    uri2 = "ws://192.168.0.101:8555"
+    try:
+        response = ping(uri1, count=4, timeout=5)
+        if response.success():
+            print(f"[CONNECTION CHECK] WebSocket server {uri1} is reachable.")
+            return uri1
+        else:
+            print(f"[CONNECTION CHECK] WebSocket server {uri1} is unreachable. Attempting connection to {uri2}")
+            reponse = ping(uri2, count=4, timeout=5)
+            if response.success():
+                print(f"[CONNECTION CHECK] WebSocket server {uri2} is reachable.")
+                return uri2
+            else:
+                print(f"[CONNECTION CHECK] WebSocket server {uri2} is unreachable.")
+                return None
+    except Exception as e:
+        print(f"[CONNECTION CHECK ERROR] {e}")
+        return None
+
 async def main():
     while True:
         start_time = time.time()
         try:
             # Replace with your actual robot's WebSocket URI
-            ws_uri = "ws://100.87.161.11:8555"
-            ws_uri2 = "ws://192.168.0.101:8555"
-            print(f"[MAIN] Connecting to {ws_uri2}...")
-            async with websockets.connect(ws_uri2) as ws:
+            ws_uri = get_connection()
+
+
+            print(f"[MAIN] Connecting to {ws_uri}...")
+            async with websockets.connect(ws_uri) as ws:
                 print("[MAIN] Connected. Starting tasks...")
                 await asyncio.gather(
                     nav_task(ws),
