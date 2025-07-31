@@ -18,7 +18,7 @@ from imu_bno085_receiver import IMUReader
 
 from CSVLogger import CSVLogger
 
-test_name = "robot_track_lookahead_CustomSeg" #CHANGE BEFORE TESTING
+test_name = "robot_track_lookahead_5mSeg" #CHANGE BEFORE TESTING
 logging = input("Enable logging(y/n)? Press Enter to continue\n")
 if logging.lower() == "y" or logging.lower() == "yes":
     csv_logger = CSVLogger(f"{test_name}.csv", True)
@@ -98,6 +98,7 @@ Yard
 -92.31870041	38.9412364
 -92.31864272	38.94123673
 -92.31858503	38.94123706
+"""
 
 TARGETS = [
     #(38.94126891, -92.31891656),
@@ -110,7 +111,7 @@ TARGETS = [
     (38.94123706, -92.31858503)
 
 ]
-"""
+
 
 
 """
@@ -129,15 +130,17 @@ TARGETS = [
 
 
 
+
 """
 Yard test (custom)
-"""
+
 
 TARGETS = [
 #(38.94126891,-92.31891656),
 (38.9412354, -92.31887348),
 (38.9412294, -92.31863472) #(38.94121944,-92.31863472)
 ]
+"""
 
 
 
@@ -314,7 +317,10 @@ async def nav_task(ws):
                 await asyncio.sleep(1)
                 continue
 
-            lat, lon, precision = pos["lat"], pos["lon"], pos["precision"]
+            lat, lon, precision = float(f"{pos['lat']:.10f}"), float(f"{pos['lon']:.10f}"), pos["precision"]
+            #lat, lon, precision = pos['lat'], pos['lon'], pos["precision"]
+
+            #print(f"[AUTO] Lat: {lat}, Lon: {lon}")
             if precision > 2 or math.isnan(precision):
                 await asyncio.sleep(1)
                 continue
@@ -391,7 +397,7 @@ async def nav_task(ws):
             try:
                 
                 await ws.send(command)
-                csv_logging_task(get_filtered_gps, _get_yaw, Xr, Yr, curvature, omega, base_speed, csv_logger)
+                csv_logging_task(get_filtered_gps, _get_yaw, TARGET_LAT, TARGET_LON, Xr, Yr, curvature, omega, base_speed, csv_logger)
             except Exception as e:
                 print(f"[WEBSOCKET ERROR] Failed to send command: {e}")
                 break  # or continue/reconnect logic
@@ -459,7 +465,7 @@ async def keyboard_task(ws):
             continue
 
         print_data("manual")
-        csv_logging_task(_get_latest_fix, _get_yaw, None, None, None, None, None, csv_logger)
+        csv_logging_task(get_filtered_gps, _get_yaw, 0, 0, 0, 0, 0.0, 0.0, 0.0, csv_logger)
 
         
         # === Handle direction combinations ===
@@ -485,7 +491,7 @@ async def keyboard_task(ws):
 # ======================
 # CSV Logging task
 # ======================
-def csv_logging_task(get_pos_func, get_yaw, Xr, Yr, curvature, omega, speed, csv_logger):
+def csv_logging_task(get_pos_func, get_yaw, targ_lat, targ_lon, Xr, Yr, curvature, omega, speed, csv_logger):
     try:
         last_timestamp = None
         pos = get_pos_func()
@@ -515,8 +521,8 @@ def csv_logging_task(get_pos_func, get_yaw, Xr, Yr, curvature, omega, speed, csv
             time_diff = UNIX_TIMESTAMP - last_timestamp
             last_timestamp = UNIX_TIMESTAMP
 
-        csv_logger.add_point(
-            timestamp_converted, mode, time_diff, dist, lon, lat, precision, yaw, yaw_acc, speed, bearing, diff, Xr, Yr, curvature, omega
+        csv_logger.add_point_main(
+            timestamp_converted, mode, time_diff, targ_lat, targ_lon, dist, lon, lat, precision, yaw, yaw_acc, speed, bearing, diff, Xr, Yr, curvature, omega
         )
 
     except Exception as e:
