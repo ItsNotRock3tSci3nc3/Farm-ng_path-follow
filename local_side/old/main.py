@@ -1,5 +1,5 @@
 import time
-from gps_reader import get_latest_fix
+from local_side.sensors.gps_reader import get_latest_fix
 from local_side.old.imu_receiver import get_yaw
 from local_side.old.nav_utils import haversine_distance, bearing_deg, angle_diff_deg
 from local_side.old.controller import send_key
