@@ -18,7 +18,7 @@ from sensors.imu_bno085_receiver import IMUReader
 
 from CSV.CSVLogger import CSVLogger
 
-test_name = "robot_track_lookahead_5mSeg_omegaTest_0.1" #CHANGE BEFORE TESTING
+test_name = "robot_track_lookahead_fieldTest" #CHANGE BEFORE TESTING
 logging = input("Enable logging(y/n)? Press Enter to continue\n")
 if logging.lower() == "y" or logging.lower() == "yes":
     csv_logger = CSVLogger(f"{test_name}.csv", True)
@@ -50,7 +50,7 @@ last_record_time = 0
 # === lookahead distance ===
 LOOKAHEAD_DISTANCE = SPEED_LEVELS[speed_index] * 3.0  # e.g. 0.6 → 1.8m
 LOOKAHEAD_DISTANCE = max(1.2, min(4.0, LOOKAHEAD_DISTANCE))
-#LOOKAHEAD_DISTANCE = 1  # meters (adjust as needed)
+#LOOKAHEAD_DISTANCE = 2  # meters (adjust as needed)
 
 origin_lat = None
 origin_lon = None
@@ -71,14 +71,17 @@ imu_reader = IMUReader()
 
 """
 Sanborn Field
+"""
 
 TARGETS = [
 (38.9425311, -92.31954402),
-(38.9425488, -92.31965974),
-(38.9425507, -92.31999613),
-(38.9425491, -92.32057431)
+(38.9425316, -92.31966229),
+(38.9425403, -92.32001389),
+(38.9425416, -92.32009089),
+(38.9425429, -92.32021301)
+#(38.9425491, -92.32057431)
 ]
-"""
+
 
 """
 Yard
@@ -98,7 +101,7 @@ Yard
 -92.31870041	38.9412364
 -92.31864272	38.94123673
 -92.31858503	38.94123706
-"""
+
 
 TARGETS = [
     #(38.94126891, -92.31891656),
@@ -111,6 +114,7 @@ TARGETS = [
     (38.94123706, -92.31858503)
 
 ]
+"""
 
 
 
@@ -269,10 +273,17 @@ def map_angle_to_speed(diff_deg):
     speed = 0.1 + 0.8 * (abs_diff / 90.0) ** 1.5 
     return round(min(speed, 0.9), 2)
 
+last_omega = 0.0  # global or closure variable
+def smooth_omega(new_omega, alpha=0.6):
+    global last_omega
+    smoothed = alpha * new_omega + (1 - alpha) * last_omega
+    last_omega = smoothed
+    return smoothed
+
 def nonlinear_omega(curvature, base_speed):
     #Gain is used to adjust the reaction speed of the robot to curvature. More gain means more reaction speed, and the opposite is true.
     # Increase gain to keep robot on track for tighter turns, decrease if there is too much oscillation
-    gain = 0.1 #1.6 default 
+    gain = 1.0  #1.6: former default 1.0 Optimal
 
     if math.isnan(curvature):
         print("[AUTO WARN] NaN curvature in omega")
@@ -381,6 +392,7 @@ async def nav_task(ws):
             curvature = 2 * math.sin(alpha) / max(Lf, 1e-3)
             base_speed = SPEED_LEVELS[speed_index]
             omega = nonlinear_omega(curvature, base_speed)
+            #omega = smooth_omega(omega)  # Apply damping
             omega = max(min(omega, 1.0), -1.0)
 
             command = f"v{base_speed:.2f}w{omega:.2f}"
