@@ -18,7 +18,7 @@ from sensors.imu_bno085_receiver import IMUReader
 
 from CSV.CSVLogger import CSVLogger
 
-test_name = "robot_track_lookahead_5mSeg" #CHANGE BEFORE TESTING
+test_name = "robot_track_lookahead_5mSeg_omegaTest_0.1" #CHANGE BEFORE TESTING
 logging = input("Enable logging(y/n)? Press Enter to continue\n")
 if logging.lower() == "y" or logging.lower() == "yes":
     csv_logger = CSVLogger(f"{test_name}.csv", True)
@@ -272,7 +272,7 @@ def map_angle_to_speed(diff_deg):
 def nonlinear_omega(curvature, base_speed):
     #Gain is used to adjust the reaction speed of the robot to curvature. More gain means more reaction speed, and the opposite is true.
     # Increase gain to keep robot on track for tighter turns, decrease if there is too much oscillation
-    gain = 1.6 
+    gain = 0.1 #1.6 default 
 
     if math.isnan(curvature):
         print("[AUTO WARN] NaN curvature in omega")
