@@ -9,3 +9,4 @@ uvicorn
 fastapi
 datetime
 pythonping
+pandas

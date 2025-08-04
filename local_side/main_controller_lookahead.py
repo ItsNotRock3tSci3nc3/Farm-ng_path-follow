@@ -16,6 +16,8 @@ import traceback
 from sensors.gps_reader import get_latest_fix 
 from sensors.imu_bno085_receiver import IMUReader
 
+import target_data.target_parser as TP
+
 from CSV.CSVLogger import CSVLogger
 
 test_name = "robot_track_lookahead_fieldTest" #CHANGE BEFORE TESTING
@@ -51,6 +53,8 @@ last_record_time = 0
 LOOKAHEAD_DISTANCE = SPEED_LEVELS[speed_index] * 3.0  # e.g. 0.6 → 1.8m
 LOOKAHEAD_DISTANCE = max(1.2, min(4.0, LOOKAHEAD_DISTANCE))
 #LOOKAHEAD_DISTANCE = 2  # meters (adjust as needed)
+#LOOKAHEAD_DISTANCE = max(2.5, min(5.0, SPEED_LEVELS[speed_index] * 4.0))
+
 
 origin_lat = None
 origin_lon = None
@@ -64,23 +68,39 @@ omega_history = []
 imu_reader = IMUReader()
 
 
-# === List of navigation targets (latitude, longitude) ===
-# come way
-#TARGETS = [(38.90764031, -92.26851491),(38.90768574, -92.26833880),(38.90775425, -92.26808159),(38.90780484, -92.26789371)]
-# out
-
 """
 Sanborn Field
 """
+"""
+-92.31959069411597	38.94254604052291	
+-92.3197815680756	38.94255188671872	
+-92.31990497646542	38.94255395089403	
+-92.32001208284804	38.94255326			
+-92.32014781232927	38.94255395089403	
+-92.32026458585942	38.94255498298167	
 
 TARGETS = [
-(38.9425311, -92.31954402),
-(38.9425316, -92.31966229),
-(38.9425403, -92.32001389),
-(38.9425416, -92.32009089),
-(38.9425429, -92.32021301)
-#(38.9425491, -92.32057431)
+(38.94254604052291, -92.31959069411597),
+(38.94255188671872, -92.3197815680756),
+(38.94255395089403, -92.31990497646542),
+(38.94255326, -92.32001208284804),
+(38.94255395089403, -92.32014781232927),
+(38.94255498298167, -92.32026458585942)
 ]
+
+
+
+# works
+TARGETS = [
+(38.94254604052291, -92.31959069411597),
+(38.94255175372573, -92.3197904932834),
+(38.94255632428765, -92.3199138986515),
+(38.942557466928086, -92.32001232912371),
+(38.94255632428765, -92.32014748738405),
+(38.94255632428765, -92.32026354719451)
+]
+"""
+
 
 
 """
@@ -156,6 +176,9 @@ TARGETS = [
 (38.94253776, -92.32057431)
 ]
 """
+
+
+TARGETS = TP.get_targets()
 
 current_target_idx = 0
 
@@ -283,7 +306,7 @@ def smooth_omega(new_omega, alpha=0.6):
 def nonlinear_omega(curvature, base_speed):
     #Gain is used to adjust the reaction speed of the robot to curvature. More gain means more reaction speed, and the opposite is true.
     # Increase gain to keep robot on track for tighter turns, decrease if there is too much oscillation
-    gain = 1.0  #1.6: former default 1.0 Optimal
+    gain = 1.0 #1.6: former default 1.0 Optimal
 
     if math.isnan(curvature):
         print("[AUTO WARN] NaN curvature in omega")
@@ -392,7 +415,7 @@ async def nav_task(ws):
             curvature = 2 * math.sin(alpha) / max(Lf, 1e-3)
             base_speed = SPEED_LEVELS[speed_index]
             omega = nonlinear_omega(curvature, base_speed)
-            #omega = smooth_omega(omega)  # Apply damping
+            #omega = smooth_omega(nonlinear_omega(curvature, base_speed))
             omega = max(min(omega, 1.0), -1.0)
 
             command = f"v{base_speed:.2f}w{omega:.2f}"
