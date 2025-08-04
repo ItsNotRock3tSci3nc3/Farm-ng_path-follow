@@ -179,6 +179,7 @@ TARGETS = [
 
 
 TARGETS = TP.get_targets()
+print(TARGETS)
 
 current_target_idx = 0
 

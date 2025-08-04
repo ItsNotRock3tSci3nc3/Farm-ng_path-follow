@@ -66,4 +66,3 @@ def set_targets():
     else:
         print("Invalid selection.")
         return None
-    
