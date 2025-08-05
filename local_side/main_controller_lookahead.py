@@ -408,6 +408,7 @@ async def nav_task(ws):
 
             alpha = math.atan2(Yr, Xr)
             Lf = math.hypot(Xr, Yr)
+            Lf = max(0.5, min(Lf, 10.0))
             if Lf < 1e-3 or math.isnan(Lf):
                 print("[LOOKAHEAD WARN] Very small or invalid Lf, skipping this cycle")
                 await asyncio.sleep(0.1)
@@ -417,7 +418,7 @@ async def nav_task(ws):
             base_speed = SPEED_LEVELS[speed_index]
             omega = nonlinear_omega(curvature, base_speed)
             #omega = smooth_omega(nonlinear_omega(curvature, base_speed))
-            omega = max(min(omega, 1.0), -1.0)
+            omega = max(min(omega, 2.5), -2.5)
 
             command = f"v{base_speed:.2f}w{omega:.2f}"
 
