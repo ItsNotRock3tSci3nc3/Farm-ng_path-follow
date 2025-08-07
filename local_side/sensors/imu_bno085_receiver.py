@@ -74,7 +74,7 @@ if __name__ == "__main__":
                 print(f"Current Yaw: {yaw:.2f}°")
             else:
                 print("[IMU READER] Yaw data not available.")
-            time.sleep(0.5)
+            #time.sleep(0.5)
     except KeyboardInterrupt:
         print("\nStopping IMU reader...")
         imu.stop()

@@ -1,6 +1,7 @@
 opencv-python 
 numpy
 farm-ng-amiga
+depthai
 pyserial
 websockets
 pynmea2

@@ -15,12 +15,13 @@ import traceback
 
 from sensors.gps_reader import get_latest_fix 
 from sensors.imu_bno085_receiver import IMUReader
+from sensors.oakD_bno085_receiver import oakDReceiver
 
 import target_data.target_parser as TP
 
 from CSV.CSVLogger import CSVLogger
 
-test_name = "robot_track_lookahead_fieldTest" #CHANGE BEFORE TESTING
+test_name = "robot_track_lookahead_oakD_IMU_test_5m_yard" #CHANGE BEFORE TESTING
 logging = input("Enable logging(y/n)? Press Enter to continue\n")
 if logging.lower() == "y" or logging.lower() == "yes":
     csv_logger = CSVLogger(f"{test_name}.csv", True)
@@ -66,117 +67,7 @@ omega_history = []
 
 # === IMU reader instance ===
 imu_reader = IMUReader()
-
-
-"""
-Sanborn Field
-"""
-"""
--92.31959069411597	38.94254604052291	
--92.3197815680756	38.94255188671872	
--92.31990497646542	38.94255395089403	
--92.32001208284804	38.94255326			
--92.32014781232927	38.94255395089403	
--92.32026458585942	38.94255498298167	
-
-TARGETS = [
-(38.94254604052291, -92.31959069411597),
-(38.94255188671872, -92.3197815680756),
-(38.94255395089403, -92.31990497646542),
-(38.94255326, -92.32001208284804),
-(38.94255395089403, -92.32014781232927),
-(38.94255498298167, -92.32026458585942)
-]
-
-
-
-# works
-TARGETS = [
-(38.94254604052291, -92.31959069411597),
-(38.94255175372573, -92.3197904932834),
-(38.94255632428765, -92.3199138986515),
-(38.942557466928086, -92.32001232912371),
-(38.94255632428765, -92.32014748738405),
-(38.94255632428765, -92.32026354719451)
-]
-"""
-
-
-
-"""
-Yard
-"""
-# TARGETS = [
-# (38.941226778933206, -92.31878180426872),
-# (38.94113774185417, -92.31877807500175)
-# ]
-
-"""
-5m points
--92.31891656	38.94126891
--92.31887569	38.94123712
--92.31887348	38.9412354
--92.31881579	38.94123573
--92.3187581	    38.94123606
--92.31870041	38.9412364
--92.31864272	38.94123673
--92.31858503	38.94123706
-
-
-TARGETS = [
-    #(38.94126891, -92.31891656),
-    (38.94123712, -92.31887569),
-    (38.9412354, -92.31887348),
-    (38.94123573, -92.31881579),
-    (38.94123606, -92.3187581),
-    (38.9412364, -92.31870041),
-    (38.94123673, -92.31864272),
-    (38.94123706, -92.31858503)
-
-]
-"""
-
-
-
-"""
-10m points
--92.31891656	38.94126891
--92.31887348	38.9412354
--92.3187581	38.94123606
-
-
-TARGETS = [
-    #(38.94126891, -92.31891656),
-    (38.9412354, -92.31887348),
-    (38.94123606, -92.3187581)
-]
-"""
-
-
-
-
-"""
-Yard test (custom)
-
-
-TARGETS = [
-#(38.94126891,-92.31891656),
-(38.9412354, -92.31887348),
-(38.9412294, -92.31863472) #(38.94121944,-92.31863472)
-]
-"""
-
-
-
-
-
-"""
-TARGETS = [
-(38.94253063, -92.31954402),
-(38.94253776, -92.32057431)
-]
-"""
-
+oakD_reader = oakDReceiver()
 
 TARGETS = TP.get_targets()
 print(TARGETS)
@@ -203,7 +94,26 @@ def _get_latest_fix():
 
     return get_latest_fix(debug=False)
 
+def _get_oakD_yaw():
+    yaw = oakD_reader.get_yaw()
+    if yaw is None:
+        print("[OAK-D Receiver] Yaw data not available.")
+        return None
+    yaw_deg = math.degrees(yaw)
+    
+    # Normalize to [-180, 180]
+    if yaw_deg > 180:
+        yaw_deg -= 360
+    elif yaw_deg < -180:
+        yaw_deg += 360
 
+    #correct yaw
+    yaw_deg = -yaw_deg
+
+    return yaw_deg
+
+def _get_oakD_yaw_accuracy():
+    return oakD_reader.get_accuracy()  # Get accuracy from OAK-D IMU interface
 
 def _get_yaw():
     raw_yaw = imu_reader.get_yaw()
@@ -229,8 +139,15 @@ def _get_yaw():
     return corrected_yaw
     #return yaw_filter.update(raw_yaw, yaw_accuracy)
 
-def _get_yaw_accuracy():
-    return imu_reader.get_accuracy()  # Get accuracy from IMU interface
+def _get_yaw_accuracy(imu):
+    acc = imu.get_accuracy()
+    if(imu == oakD_reader) and acc is None or acc == 0.0:
+        #print(f"[OAK-D ACCURACY] ⚠️ OAK-D IMU accuracy is {acc}")
+        return float('inf')  # treat 0.0 as unusably bad
+    elif(imu == oakD_reader):
+        return math.degrees(acc)  # Convert rad → degrees for consistency
+    
+    return acc  # return accuracy if not oakD imu
 
 # ======================
 # Heading/distance calculation utilities
@@ -346,11 +263,17 @@ async def nav_task(ws):
 
             pos = get_filtered_gps()
             yaw = _get_yaw()
-            yaw_acc = _get_yaw_accuracy()
+            oakD_yaw = _get_oakD_yaw()
+            oakD_yaw_acc = _get_yaw_accuracy(oakD_reader)
+            yaw_acc = _get_yaw_accuracy(imu_reader)
 
-            if pos is None or yaw is None or yaw_acc > 5.0:
+            if pos is None or (oakD_yaw and yaw is None) or yaw_acc > 5.0: #or (oakD_yaw_acc < 0.01 and oakD_yaw_acc > 0.05):
+                print(f"[AUTO] Sensor(s) input error. Pos: {pos}, Yaw: {yaw}, Yaw Acc: {fmt(yaw_acc)}, OAK-D Yaw: {oakD_yaw}")
                 await asyncio.sleep(1)
                 continue
+
+            yaw = oakD_yaw #FOR TESTING ONLY
+            yaw_acc = oakD_yaw_acc #FOR TESTING ONLY
 
             lat, lon, precision = float(f"{pos['lat']:.10f}"), float(f"{pos['lon']:.10f}"), pos["precision"]
             #lat, lon, precision = pos['lat'], pos['lon'], pos["precision"]
@@ -372,6 +295,7 @@ async def nav_task(ws):
                 print(f"[LON_TO_M ERROR] Invalid lat={lat}")
                 await asyncio.sleep(0.2)
                 continue
+            
             yaw_rad = math.radians(yaw)
 
             lookahead_point = None
@@ -430,11 +354,10 @@ async def nav_task(ws):
 
             print_data("auto", f"Waypoint {current_target_idx+1}/{len(TARGETS)} | Xr={Xr:.2f}, Yr={Yr:.2f}, α={math.degrees(alpha):.2f}, Lf={Lf:.2f}, curvature={curvature:.4f}, ω={omega:.3f}")
             
-            # This is likely where it dies — protect it:
             try:
                 
                 await ws.send(command)
-                csv_logging_task(get_filtered_gps, _get_yaw, TARGET_LAT, TARGET_LON, Xr, Yr, curvature, omega, base_speed, csv_logger)
+                csv_logging_task(get_filtered_gps, yaw, yaw_acc, oakD_yaw, oakD_yaw_acc, TARGET_LAT, TARGET_LON, Xr, Yr, curvature, omega, base_speed, csv_logger)
             except Exception as e:
                 print(f"[WEBSOCKET ERROR] Failed to send command: {e}")
                 break  # or continue/reconnect logic
@@ -502,7 +425,9 @@ async def keyboard_task(ws):
             continue
 
         print_data("manual")
-        csv_logging_task(get_filtered_gps, _get_yaw, 0, 0, 0, 0, 0.0, 0.0, 0.0, csv_logger)
+        yaw = _get_yaw()
+        oakD_yaw = _get_oakD_yaw()
+        csv_logging_task(get_filtered_gps, yaw, _get_yaw_accuracy(imu_reader), oakD_yaw, _get_yaw_accuracy(oakD_reader), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,csv_logger)
 
         
         # === Handle direction combinations ===
@@ -528,15 +453,17 @@ async def keyboard_task(ws):
 # ======================
 # CSV Logging task
 # ======================
-def csv_logging_task(get_pos_func, get_yaw, targ_lat, targ_lon, Xr, Yr, curvature, omega, speed, csv_logger):
+def csv_logging_task(get_pos_func, yaw_in, yaw_accuracy, oakD_yaw, oakD_yaw_accuracy, targ_lat, targ_lon, Xr, Yr, curvature, omega, speed, csv_logger):
     try:
         last_timestamp = None
         pos = get_pos_func()
-        yaw = get_yaw()
+        yaw = yaw_in
+        oakD_yaw = oakD_yaw
 
         if pos is not None and yaw is not None:
             lat, lon = pos["lat"], pos["lon"]
-            yaw_acc = _get_yaw_accuracy()
+            yaw_acc = yaw_accuracy
+            oakD_yaw_acc = oakD_yaw_accuracy
             dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
             bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
 
@@ -559,7 +486,7 @@ def csv_logging_task(get_pos_func, get_yaw, targ_lat, targ_lon, Xr, Yr, curvatur
             last_timestamp = UNIX_TIMESTAMP
 
         csv_logger.add_point_main(
-            timestamp_converted, mode, time_diff, targ_lat, targ_lon, dist, lon, lat, precision, yaw, yaw_acc, speed, bearing, diff, Xr, Yr, curvature, omega
+            timestamp_converted, mode, time_diff, targ_lat, targ_lon, dist, lon, lat, precision, yaw, yaw_acc, oakD_yaw, oakD_yaw_acc, speed, bearing, diff, Xr, Yr, curvature, omega
         )
 
     except Exception as e:
@@ -575,8 +502,9 @@ def print_data(mode, ext_data=None, diff = None):
     mode = mode.upper()
     pos = get_filtered_gps()
     yaw = _get_yaw()
-    yaw_acc = _get_yaw_accuracy()
-
+    yaw_acc = _get_yaw_accuracy(imu_reader)
+    oakD_yaw = _get_oakD_yaw()
+    oakD_yaw_acc = _get_yaw_accuracy(oakD_reader)
     if pos is None:
         print(f"[{mode}] ⚠️ GPS data unavailable.")
         return
@@ -594,7 +522,7 @@ def print_data(mode, ext_data=None, diff = None):
         yaw = 0  # Fallback to 0 if yaw is None
     try:
         if ext_data is not None:
-            print(f"[{mode}] 📍 {ext_data} Lat={fmt(lat, 8)}°, Lon={fmt(lon, 8)}°, Dist={fmt(dist, 2)}m, Yaw={fmt(yaw, 2)}, Yaw precision = {fmt(yaw_acc)}, bearing= {fmt(bearing, 2)}, Δ={fmt(diff, 2)}, Precision={fmt(precision, 2)}")
+            print(f"[{mode}] 📍 {ext_data} Lat={fmt(lat, 8)}°, Lon={fmt(lon, 8)}°, Dist={fmt(dist, 2)}m, Yaw = {fmt(yaw, 2)}, Yaw precision = {fmt(yaw_acc)}, oak-D Yaw = {fmt(oakD_yaw,2)}, oak-D Yaw accuracy= {fmt(oakD_yaw_acc,2)}, bearing= {fmt(bearing, 2)}, Δ={fmt(diff, 2)}, Precision={fmt(precision, 2)}")
         else:
             print(f"[{mode}] 📍 Lat={fmt(lat, 8)}°, Lon={fmt(lon, 8)}°, Dist={fmt(dist, 2)}m, Yaw={fmt(yaw, 2)}, Yaw precision = {fmt(yaw_acc)}, bearing= {fmt(bearing, 2)}, Δ={fmt(diff, 2)}, Precision={fmt(precision, 2)}")
     except Exception as e:

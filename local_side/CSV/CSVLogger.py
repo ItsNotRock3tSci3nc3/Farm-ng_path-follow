@@ -39,10 +39,10 @@ class CSVLogger:
     def init_IMU_log(self):
         self.writer.writerow(["timestamp", "Robot state", "Time difference", "yaw", "yaw precision"])
 
-    def add_point_main(self, time = "NULL", state = "NULL", time_diff = "NULL", target_lat = 0, target_lon = 0, dist = 0, lon = 0, lat = 0, prec = 0, yaw = 0, yaw_acc = -1, speed = -1, bearing = -1, delta = 0, Xr = 0, Yr = 0, curvature = 0, omega = 0):
+    def add_point_main(self, time = "NULL", state = "NULL", time_diff = "NULL", target_lat = 0, target_lon = 0, dist = 0, lon = 0, lat = 0, prec = 0, yaw = 0, yaw_acc = -1, oakD_yaw = 0, oakD_yaw_acc = 0.0, speed = -1, bearing = -1, delta = 0, Xr = 0, Yr = 0, curvature = 0, omega = 0):
         if not self.logging:
             return
-        self.writer.writerow([time, state, time_diff, target_lat, target_lon, dist, lat, lon, prec, yaw, yaw_acc, speed, bearing, delta, Xr, Yr, curvature, omega])
+        self.writer.writerow([time, state, time_diff, target_lat, target_lon, dist, lat, lon, prec, yaw, yaw_acc, oakD_yaw, oakD_yaw_acc, speed, bearing, delta, Xr, Yr, curvature, omega])
 
     def close(self):
         if not self.logging:

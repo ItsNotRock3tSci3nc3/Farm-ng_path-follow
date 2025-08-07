@@ -11,8 +11,10 @@ services:
     devices:
       - ${ESP32_PORT}:${ESP32_PORT}
       - ${RTK_PORT}:${RTK_PORT}
+      - /dev/bus/usb:/dev/bus/usb  # OAK‑D support    
     environment:
       - DISPLAY=${DISPLAY}
     volumes:
       - .:/app
+      - /dev:/dev
       - /tmp/.X11-unix:/tmp/.X11-unix
