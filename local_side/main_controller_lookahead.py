@@ -15,13 +15,13 @@ import traceback
 
 from sensors.gps_reader import get_latest_fix 
 from sensors.imu_bno085_receiver import IMUReader
-from sensors.oakD_bno085_receiver import oakDReceiver
+#from sensors.oakD_bno085_receiver import oakDReceiver
 
 import target_data.target_parser as TP
 
 from CSV.CSVLogger import CSVLogger
 
-test_name = "robot_track_lookahead_oakD_IMU_test_5m_yard" #CHANGE BEFORE TESTING
+test_name = "robot_track_lookahead_SouthFarm_demo" #CHANGE BEFORE TESTING
 logging = input("Enable logging(y/n)? Press Enter to continue\n")
 if logging.lower() == "y" or logging.lower() == "yes":
     csv_logger = CSVLogger(f"{test_name}.csv", True)
@@ -67,7 +67,7 @@ omega_history = []
 
 # === IMU reader instance ===
 imu_reader = IMUReader()
-oakD_reader = oakDReceiver()
+oakD_reader = None #oakDReceiver()
 
 TARGETS = TP.get_targets()
 print(TARGETS)
@@ -95,7 +95,7 @@ def _get_latest_fix():
     return get_latest_fix(debug=False)
 
 def _get_oakD_yaw():
-    yaw = oakD_reader.get_yaw()
+    yaw = None#oakD_reader.get_yaw()
     if yaw is None:
         print("[OAK-D Receiver] Yaw data not available.")
         return None
@@ -110,10 +110,10 @@ def _get_oakD_yaw():
     #correct yaw
     yaw_deg = -yaw_deg
 
-    return yaw_deg
+    return None#yaw_deg
 
 def _get_oakD_yaw_accuracy():
-    return oakD_reader.get_accuracy()  # Get accuracy from OAK-D IMU interface
+    return None#oakD_reader.get_accuracy()  # Get accuracy from OAK-D IMU interface
 
 def _get_yaw():
     raw_yaw = imu_reader.get_yaw()
@@ -141,12 +141,15 @@ def _get_yaw():
 
 def _get_yaw_accuracy(imu):
     acc = imu.get_accuracy()
+    '''
     if(imu == oakD_reader) and acc is None or acc == 0.0:
         #print(f"[OAK-D ACCURACY] ⚠️ OAK-D IMU accuracy is {acc}")
         return float('inf')  # treat 0.0 as unusably bad
     elif(imu == oakD_reader):
-        return math.degrees(acc)  # Convert rad → degrees for consistency
+        return None#math.degrees(acc)  # Convert rad → degrees for consistency
+    '''
     
+    acc = math.degrees(acc)
     return acc  # return accuracy if not oakD imu
 
 # ======================
@@ -263,17 +266,17 @@ async def nav_task(ws):
 
             pos = get_filtered_gps()
             yaw = _get_yaw()
-            oakD_yaw = _get_oakD_yaw()
-            oakD_yaw_acc = _get_yaw_accuracy(oakD_reader)
+            #oakD_yaw = _get_oakD_yaw()
+            #oakD_yaw_acc = _get_yaw_accuracy(oakD_reader)
             yaw_acc = _get_yaw_accuracy(imu_reader)
 
-            if pos is None or (oakD_yaw and yaw is None) or yaw_acc > 5.0: #or (oakD_yaw_acc < 0.01 and oakD_yaw_acc > 0.05):
-                print(f"[AUTO] Sensor(s) input error. Pos: {pos}, Yaw: {yaw}, Yaw Acc: {fmt(yaw_acc)}, OAK-D Yaw: {oakD_yaw}")
+            if pos is None or (yaw is None) or yaw_acc > 5.0: #or (oakD_yaw_acc < 0.01 and oakD_yaw_acc > 0.05):
+                print(f"[AUTO] Sensor(s) input error. Pos: {pos}, Yaw: {yaw}, Yaw Acc: {fmt(yaw_acc)}")
                 await asyncio.sleep(1)
                 continue
 
-            yaw = oakD_yaw #FOR TESTING ONLY
-            yaw_acc = oakD_yaw_acc #FOR TESTING ONLY
+            #yaw = oakD_yaw #FOR TESTING ONLY
+            #yaw_acc = oakD_yaw_acc #FOR TESTING ONLY
 
             lat, lon, precision = float(f"{pos['lat']:.10f}"), float(f"{pos['lon']:.10f}"), pos["precision"]
             #lat, lon, precision = pos['lat'], pos['lon'], pos["precision"]
@@ -357,7 +360,7 @@ async def nav_task(ws):
             try:
                 
                 await ws.send(command)
-                csv_logging_task(get_filtered_gps, yaw, yaw_acc, oakD_yaw, oakD_yaw_acc, TARGET_LAT, TARGET_LON, Xr, Yr, curvature, omega, base_speed, csv_logger)
+                csv_logging_task(get_filtered_gps, yaw, yaw_acc, None, None, TARGET_LAT, TARGET_LON, Xr, Yr, curvature, omega, base_speed, csv_logger)
             except Exception as e:
                 print(f"[WEBSOCKET ERROR] Failed to send command: {e}")
                 break  # or continue/reconnect logic
@@ -367,8 +370,8 @@ async def nav_task(ws):
                 if current_target_idx >= len(TARGETS):
                     print("✅ Reached final waypoint. Stopping.")
                     try:
-                        
-                        await ws.send("v0.00w0.00")
+                        current_target_idx = 0
+                        #await ws.send("v0.00w0.00")
                     except:
                         pass
                     break
@@ -426,8 +429,8 @@ async def keyboard_task(ws):
 
         print_data("manual")
         yaw = _get_yaw()
-        oakD_yaw = _get_oakD_yaw()
-        csv_logging_task(get_filtered_gps, yaw, _get_yaw_accuracy(imu_reader), oakD_yaw, _get_yaw_accuracy(oakD_reader), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,csv_logger)
+        oakD_yaw = None
+        csv_logging_task(get_filtered_gps, yaw, _get_yaw_accuracy(imu_reader), oakD_yaw, None, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,csv_logger)
 
         
         # === Handle direction combinations ===
@@ -458,12 +461,12 @@ def csv_logging_task(get_pos_func, yaw_in, yaw_accuracy, oakD_yaw, oakD_yaw_accu
         last_timestamp = None
         pos = get_pos_func()
         yaw = yaw_in
-        oakD_yaw = oakD_yaw
+        oakD_yaw = None #oakD_yaw
 
         if pos is not None and yaw is not None:
             lat, lon = pos["lat"], pos["lon"]
             yaw_acc = yaw_accuracy
-            oakD_yaw_acc = oakD_yaw_accuracy
+            oakD_yaw_acc = None #oakD_yaw_accuracy
             dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
             bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
 
@@ -503,8 +506,8 @@ def print_data(mode, ext_data=None, diff = None):
     pos = get_filtered_gps()
     yaw = _get_yaw()
     yaw_acc = _get_yaw_accuracy(imu_reader)
-    oakD_yaw = _get_oakD_yaw()
-    oakD_yaw_acc = _get_yaw_accuracy(oakD_reader)
+    oakD_yaw = None #_get_oakD_yaw()
+    oakD_yaw_acc = None#_get_yaw_accuracy(oakD_reader)
     if pos is None:
         print(f"[{mode}] ⚠️ GPS data unavailable.")
         return
@@ -548,7 +551,7 @@ def fmt(val, precision=None):
 from pythonping import ping
 def get_connection():
     uri1 = "100.87.161.11"
-    uri2 = "192.168.0.101"
+    uri2 = "192.168.0.100"
     try:
         response = ping(uri1, count=4, timeout=5)
         if response.success():

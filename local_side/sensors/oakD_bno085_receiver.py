@@ -14,7 +14,7 @@ class oakDReceiver:
         imu.setBatchReportThreshold(1)
         imu.setMaxBatchReports(10)
 
-        xout = self.pipeline.create(dai.node.XLinkOut)
+        xout = self.pipeline.create(dai.node.IMU)
         xout.setStreamName("imu")
         imu.out.link(xout.input)
 

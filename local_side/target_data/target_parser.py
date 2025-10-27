@@ -6,6 +6,7 @@ RELATIVE_PATH = "./target_data"
 
 YARD_PATH = F"{RELATIVE_PATH}/yard"
 SANBORN_PATH = f"{RELATIVE_PATH}/sanborn"
+SOUTHFARM_PATH = f"{RELATIVE_PATH}/southFarm_demo"
 
 
 
@@ -41,7 +42,7 @@ def set_targets():
     all_files = {}
 
     index = 1
-    for label, folder in [('YARD', YARD_PATH), ('SANBORN', SANBORN_PATH)]:
+    for label, folder in [('YARD', YARD_PATH), ('SANBORN', SANBORN_PATH), ('South Farm Demo', SOUTHFARM_PATH)]:
         print(f"\n{label} targets:")
         if not os.path.exists(folder):
             print(f"  (No directory: {folder})")
