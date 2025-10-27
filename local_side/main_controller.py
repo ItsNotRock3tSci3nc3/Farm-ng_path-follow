@@ -7,10 +7,10 @@ import pygame
 import time
 import datetime
 
-from gps_reader import get_latest_fix 
-from imu_bno085_receiver import IMUReader
+from local_side.sensors.gps_reader import get_latest_fix 
+from local_side.sensors.imu_bno085_receiver import IMUReader
 
-from CSVLogger import CSVLogger
+from local_side.CSV_files.CSVLogger import CSVLogger
 
 test_name = "robot_track_kalman_buffer_yawAcc" #CHANGE BEFORE TESTING
 logging = input("Enable logging(y/n)? Press Enter to continue\n")
@@ -19,10 +19,10 @@ if logging.lower() == "y" or logging.lower() == "yes":
 else:
     csv_logger = CSVLogger(f"{test_name}.csv", False)
 
-from kalman_filter import KalmanFilter2D
+from local_side.filters.kalman_filter import KalmanFilter2D
 kf = KalmanFilter2D()
 
-from yaw_filter import YawFilter
+from local_side.filters.yaw_filter import YawFilter
 yaw_filter = YawFilter(alpha=0.7)  # Adjust alpha as needed
 
 # === Navigation target point ===

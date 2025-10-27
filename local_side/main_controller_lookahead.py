@@ -13,22 +13,29 @@ import time
 import datetime
 import traceback
 
-from gps_reader import get_latest_fix 
-from imu_bno085_receiver import IMUReader
+from sensors.gps_reader import get_latest_fix 
+from sensors.imu_bno085_receiver import IMUReader
+#from sensors.oakD_bno085_receiver import oakDReceiver
 
-from CSVLogger import CSVLogger
+import target_data.target_parser as TP
 
+<<<<<<< HEAD
 test_name = "robot_track_lookahead_5mSeg" #CHANGE BEFORE TESTING
+=======
+from CSV.CSVLogger import CSVLogger
+
+test_name = "robot_track_lookahead_SouthFarm_demo" #CHANGE BEFORE TESTING
+>>>>>>> simple_organized
 logging = input("Enable logging(y/n)? Press Enter to continue\n")
 if logging.lower() == "y" or logging.lower() == "yes":
     csv_logger = CSVLogger(f"{test_name}.csv", True)
 else:
     csv_logger = CSVLogger(f"{test_name}.csv", False)
 
-from kalman_filter import KalmanFilter2D
+from filters.kalman_filter import KalmanFilter2D
 kf = KalmanFilter2D()
 
-from yaw_filter import YawFilter
+from filters.yaw_filter import YawFilter
 yaw_filter = YawFilter(alpha=0.7)  # Adjust alpha as needed
 
 # === Navigation target point ===
@@ -50,7 +57,9 @@ last_record_time = 0
 # === lookahead distance ===
 LOOKAHEAD_DISTANCE = SPEED_LEVELS[speed_index] * 3.0  # e.g. 0.6 → 1.8m
 LOOKAHEAD_DISTANCE = max(1.2, min(4.0, LOOKAHEAD_DISTANCE))
-#LOOKAHEAD_DISTANCE = 1  # meters (adjust as needed)
+#LOOKAHEAD_DISTANCE = 2  # meters (adjust as needed)
+#LOOKAHEAD_DISTANCE = max(2.5, min(5.0, SPEED_LEVELS[speed_index] * 4.0))
+
 
 origin_lat = None
 origin_lon = None
@@ -62,7 +71,9 @@ omega_history = []
 
 # === IMU reader instance ===
 imu_reader = IMUReader()
+oakD_reader = None #oakDReceiver()
 
+<<<<<<< HEAD
 
 # === List of navigation targets (latitude, longitude) ===
 # come way
@@ -152,6 +163,10 @@ TARGETS = [
 (38.94253776, -92.32057431)
 ]
 """
+=======
+TARGETS = TP.get_targets()
+print(TARGETS)
+>>>>>>> simple_organized
 
 current_target_idx = 0
 
@@ -175,7 +190,26 @@ def _get_latest_fix():
 
     return get_latest_fix(debug=False)
 
+def _get_oakD_yaw():
+    yaw = None#oakD_reader.get_yaw()
+    if yaw is None:
+        print("[OAK-D Receiver] Yaw data not available.")
+        return None
+    yaw_deg = math.degrees(yaw)
+    
+    # Normalize to [-180, 180]
+    if yaw_deg > 180:
+        yaw_deg -= 360
+    elif yaw_deg < -180:
+        yaw_deg += 360
 
+    #correct yaw
+    yaw_deg = -yaw_deg
+
+    return None#yaw_deg
+
+def _get_oakD_yaw_accuracy():
+    return None#oakD_reader.get_accuracy()  # Get accuracy from OAK-D IMU interface
 
 def _get_yaw():
     raw_yaw = imu_reader.get_yaw()
@@ -201,8 +235,18 @@ def _get_yaw():
     return corrected_yaw
     #return yaw_filter.update(raw_yaw, yaw_accuracy)
 
-def _get_yaw_accuracy():
-    return imu_reader.get_accuracy()  # Get accuracy from IMU interface
+def _get_yaw_accuracy(imu):
+    acc = imu.get_accuracy()
+    '''
+    if(imu == oakD_reader) and acc is None or acc == 0.0:
+        #print(f"[OAK-D ACCURACY] ⚠️ OAK-D IMU accuracy is {acc}")
+        return float('inf')  # treat 0.0 as unusably bad
+    elif(imu == oakD_reader):
+        return None#math.degrees(acc)  # Convert rad → degrees for consistency
+    '''
+    
+    acc = math.degrees(acc)
+    return acc  # return accuracy if not oakD imu
 
 # ======================
 # Heading/distance calculation utilities
@@ -269,10 +313,17 @@ def map_angle_to_speed(diff_deg):
     speed = 0.1 + 0.8 * (abs_diff / 90.0) ** 1.5 
     return round(min(speed, 0.9), 2)
 
+last_omega = 0.0  # global or closure variable
+def smooth_omega(new_omega, alpha=0.6):
+    global last_omega
+    smoothed = alpha * new_omega + (1 - alpha) * last_omega
+    last_omega = smoothed
+    return smoothed
+
 def nonlinear_omega(curvature, base_speed):
     #Gain is used to adjust the reaction speed of the robot to curvature. More gain means more reaction speed, and the opposite is true.
     # Increase gain to keep robot on track for tighter turns, decrease if there is too much oscillation
-    gain = 1.6 
+    gain = 1.0 #1.6: former default 1.0 Optimal
 
     if math.isnan(curvature):
         print("[AUTO WARN] NaN curvature in omega")
@@ -311,12 +362,21 @@ async def nav_task(ws):
 
             pos = get_filtered_gps()
             yaw = _get_yaw()
-            yaw_acc = _get_yaw_accuracy()
+            #oakD_yaw = _get_oakD_yaw()
+            #oakD_yaw_acc = _get_yaw_accuracy(oakD_reader)
+            yaw_acc = _get_yaw_accuracy(imu_reader)
 
-            if pos is None or yaw is None or yaw_acc > 5.0:
+            if pos is None or (yaw is None) or yaw_acc > 5.0: #or (oakD_yaw_acc < 0.01 and oakD_yaw_acc > 0.05):
+                print(f"[AUTO] Sensor(s) input error. Pos: {pos}, Yaw: {yaw}, Yaw Acc: {fmt(yaw_acc)}")
                 await asyncio.sleep(1)
                 continue
 
+<<<<<<< HEAD
+=======
+            #yaw = oakD_yaw #FOR TESTING ONLY
+            #yaw_acc = oakD_yaw_acc #FOR TESTING ONLY
+
+>>>>>>> simple_organized
             lat, lon, precision = float(f"{pos['lat']:.10f}"), float(f"{pos['lon']:.10f}"), pos["precision"]
             #lat, lon, precision = pos['lat'], pos['lon'], pos["precision"]
 
@@ -337,6 +397,7 @@ async def nav_task(ws):
                 print(f"[LON_TO_M ERROR] Invalid lat={lat}")
                 await asyncio.sleep(0.2)
                 continue
+            
             yaw_rad = math.radians(yaw)
 
             lookahead_point = None
@@ -373,6 +434,7 @@ async def nav_task(ws):
 
             alpha = math.atan2(Yr, Xr)
             Lf = math.hypot(Xr, Yr)
+            Lf = max(0.5, min(Lf, 10.0))
             if Lf < 1e-3 or math.isnan(Lf):
                 print("[LOOKAHEAD WARN] Very small or invalid Lf, skipping this cycle")
                 await asyncio.sleep(0.1)
@@ -381,7 +443,8 @@ async def nav_task(ws):
             curvature = 2 * math.sin(alpha) / max(Lf, 1e-3)
             base_speed = SPEED_LEVELS[speed_index]
             omega = nonlinear_omega(curvature, base_speed)
-            omega = max(min(omega, 1.0), -1.0)
+            #omega = smooth_omega(nonlinear_omega(curvature, base_speed))
+            omega = max(min(omega, 2.5), -2.5)
 
             command = f"v{base_speed:.2f}w{omega:.2f}"
 
@@ -393,11 +456,14 @@ async def nav_task(ws):
 
             print_data("auto", f"Waypoint {current_target_idx+1}/{len(TARGETS)} | Xr={Xr:.2f}, Yr={Yr:.2f}, α={math.degrees(alpha):.2f}, Lf={Lf:.2f}, curvature={curvature:.4f}, ω={omega:.3f}")
             
-            # This is likely where it dies — protect it:
             try:
                 
                 await ws.send(command)
+<<<<<<< HEAD
                 csv_logging_task(get_filtered_gps, _get_yaw, TARGET_LAT, TARGET_LON, Xr, Yr, curvature, omega, base_speed, csv_logger)
+=======
+                csv_logging_task(get_filtered_gps, yaw, yaw_acc, None, None, TARGET_LAT, TARGET_LON, Xr, Yr, curvature, omega, base_speed, csv_logger)
+>>>>>>> simple_organized
             except Exception as e:
                 print(f"[WEBSOCKET ERROR] Failed to send command: {e}")
                 break  # or continue/reconnect logic
@@ -407,8 +473,8 @@ async def nav_task(ws):
                 if current_target_idx >= len(TARGETS):
                     print("✅ Reached final waypoint. Stopping.")
                     try:
-                        
-                        await ws.send("v0.00w0.00")
+                        current_target_idx = 0
+                        #await ws.send("v0.00w0.00")
                     except:
                         pass
                     break
@@ -465,7 +531,13 @@ async def keyboard_task(ws):
             continue
 
         print_data("manual")
+<<<<<<< HEAD
         csv_logging_task(get_filtered_gps, _get_yaw, 0, 0, 0, 0, 0.0, 0.0, 0.0, csv_logger)
+=======
+        yaw = _get_yaw()
+        oakD_yaw = None
+        csv_logging_task(get_filtered_gps, yaw, _get_yaw_accuracy(imu_reader), oakD_yaw, None, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,csv_logger)
+>>>>>>> simple_organized
 
         
         # === Handle direction combinations ===
@@ -491,15 +563,21 @@ async def keyboard_task(ws):
 # ======================
 # CSV Logging task
 # ======================
+<<<<<<< HEAD
 def csv_logging_task(get_pos_func, get_yaw, targ_lat, targ_lon, Xr, Yr, curvature, omega, speed, csv_logger):
+=======
+def csv_logging_task(get_pos_func, yaw_in, yaw_accuracy, oakD_yaw, oakD_yaw_accuracy, targ_lat, targ_lon, Xr, Yr, curvature, omega, speed, csv_logger):
+>>>>>>> simple_organized
     try:
         last_timestamp = None
         pos = get_pos_func()
-        yaw = get_yaw()
+        yaw = yaw_in
+        oakD_yaw = None #oakD_yaw
 
         if pos is not None and yaw is not None:
             lat, lon = pos["lat"], pos["lon"]
-            yaw_acc = _get_yaw_accuracy()
+            yaw_acc = yaw_accuracy
+            oakD_yaw_acc = None #oakD_yaw_accuracy
             dist = haversine_distance(lat, lon, TARGET_LAT, TARGET_LON)
             bearing = bearing_deg(lat, lon, TARGET_LAT, TARGET_LON)
 
@@ -522,7 +600,11 @@ def csv_logging_task(get_pos_func, get_yaw, targ_lat, targ_lon, Xr, Yr, curvatur
             last_timestamp = UNIX_TIMESTAMP
 
         csv_logger.add_point_main(
+<<<<<<< HEAD
             timestamp_converted, mode, time_diff, targ_lat, targ_lon, dist, lon, lat, precision, yaw, yaw_acc, speed, bearing, diff, Xr, Yr, curvature, omega
+=======
+            timestamp_converted, mode, time_diff, targ_lat, targ_lon, dist, lon, lat, precision, yaw, yaw_acc, oakD_yaw, oakD_yaw_acc, speed, bearing, diff, Xr, Yr, curvature, omega
+>>>>>>> simple_organized
         )
 
     except Exception as e:
@@ -538,8 +620,9 @@ def print_data(mode, ext_data=None, diff = None):
     mode = mode.upper()
     pos = get_filtered_gps()
     yaw = _get_yaw()
-    yaw_acc = _get_yaw_accuracy()
-
+    yaw_acc = _get_yaw_accuracy(imu_reader)
+    oakD_yaw = None #_get_oakD_yaw()
+    oakD_yaw_acc = None#_get_yaw_accuracy(oakD_reader)
     if pos is None:
         print(f"[{mode}] ⚠️ GPS data unavailable.")
         return
@@ -557,7 +640,7 @@ def print_data(mode, ext_data=None, diff = None):
         yaw = 0  # Fallback to 0 if yaw is None
     try:
         if ext_data is not None:
-            print(f"[{mode}] 📍 {ext_data} Lat={fmt(lat, 8)}°, Lon={fmt(lon, 8)}°, Dist={fmt(dist, 2)}m, Yaw={fmt(yaw, 2)}, Yaw precision = {fmt(yaw_acc)}, bearing= {fmt(bearing, 2)}, Δ={fmt(diff, 2)}, Precision={fmt(precision, 2)}")
+            print(f"[{mode}] 📍 {ext_data} Lat={fmt(lat, 8)}°, Lon={fmt(lon, 8)}°, Dist={fmt(dist, 2)}m, Yaw = {fmt(yaw, 2)}, Yaw precision = {fmt(yaw_acc)}, oak-D Yaw = {fmt(oakD_yaw,2)}, oak-D Yaw accuracy= {fmt(oakD_yaw_acc,2)}, bearing= {fmt(bearing, 2)}, Δ={fmt(diff, 2)}, Precision={fmt(precision, 2)}")
         else:
             print(f"[{mode}] 📍 Lat={fmt(lat, 8)}°, Lon={fmt(lon, 8)}°, Dist={fmt(dist, 2)}m, Yaw={fmt(yaw, 2)}, Yaw precision = {fmt(yaw_acc)}, bearing= {fmt(bearing, 2)}, Δ={fmt(diff, 2)}, Precision={fmt(precision, 2)}")
     except Exception as e:
@@ -583,7 +666,7 @@ def fmt(val, precision=None):
 from pythonping import ping
 def get_connection():
     uri1 = "100.87.161.11"
-    uri2 = "192.168.0.101"
+    uri2 = "192.168.0.100"
     try:
         response = ping(uri1, count=4, timeout=5)
         if response.success():

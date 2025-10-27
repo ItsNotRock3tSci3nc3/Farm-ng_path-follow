@@ -6,17 +6,17 @@ import pygame
 import time
 import datetime
 # from imu_receiver import get_yaw
-from gps_reader import get_latest_fix 
-from imu_bno085_receiver import IMUReader
+from local_side.sensors.gps_reader import get_latest_fix 
+from local_side.sensors.imu_bno085_receiver import IMUReader
 imu_reader = IMUReader()
 
-from CSVLogger import CSVLogger
+from local_side.CSV.CSVLogger import CSVLogger
 csv_logger = CSVLogger("robot_track_testrun1.csv") #CHANGE BEFORE TESTING
 
-from local_side.kalman_filter import KalmanFilter2D
+from local_side.filters.kalman_filter import KalmanFilter2D
 kf = KalmanFilter2D()
 
-from yaw_filter import YawFilter
+from local_side.filters.yaw_filter import YawFilter
 yaw_filter = YawFilter(alpha=0.7)  # Adjust alpha as needed
 
 TARGET_LAT = 38.94123854
