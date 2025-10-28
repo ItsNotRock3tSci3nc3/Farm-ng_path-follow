@@ -19,13 +19,9 @@ from sensors.imu_bno085_receiver import IMUReader
 
 import target_data.target_parser as TP
 
-<<<<<<< HEAD
-test_name = "robot_track_lookahead_5mSeg" #CHANGE BEFORE TESTING
-=======
 from CSV.CSVLogger import CSVLogger
 
 test_name = "robot_track_lookahead_SouthFarm_demo" #CHANGE BEFORE TESTING
->>>>>>> simple_organized
 logging = input("Enable logging(y/n)? Press Enter to continue\n")
 if logging.lower() == "y" or logging.lower() == "yes":
     csv_logger = CSVLogger(f"{test_name}.csv", True)
