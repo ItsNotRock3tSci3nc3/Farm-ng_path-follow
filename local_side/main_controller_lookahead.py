@@ -69,100 +69,8 @@ omega_history = []
 imu_reader = IMUReader()
 oakD_reader = None #oakDReceiver()
 
-<<<<<<< HEAD
-
-# === List of navigation targets (latitude, longitude) ===
-# come way
-#TARGETS = [(38.90764031, -92.26851491),(38.90768574, -92.26833880),(38.90775425, -92.26808159),(38.90780484, -92.26789371)]
-# out
-
-"""
-Sanborn Field
-
-TARGETS = [
-(38.9425311, -92.31954402),
-(38.9425488, -92.31965974),
-(38.9425507, -92.31999613),
-(38.9425491, -92.32057431)
-]
-"""
-
-"""
-Yard
-"""
-# TARGETS = [
-# (38.941226778933206, -92.31878180426872),
-# (38.94113774185417, -92.31877807500175)
-# ]
-
-"""
-5m points
--92.31891656	38.94126891
--92.31887569	38.94123712
--92.31887348	38.9412354
--92.31881579	38.94123573
--92.3187581	    38.94123606
--92.31870041	38.9412364
--92.31864272	38.94123673
--92.31858503	38.94123706
-"""
-
-TARGETS = [
-    #(38.94126891, -92.31891656),
-    (38.94123712, -92.31887569),
-    (38.9412354, -92.31887348),
-    (38.94123573, -92.31881579),
-    (38.94123606, -92.3187581),
-    (38.9412364, -92.31870041),
-    (38.94123673, -92.31864272),
-    (38.94123706, -92.31858503)
-
-]
-
-
-
-"""
-10m points
--92.31891656	38.94126891
--92.31887348	38.9412354
--92.3187581	38.94123606
-
-
-TARGETS = [
-    #(38.94126891, -92.31891656),
-    (38.9412354, -92.31887348),
-    (38.94123606, -92.3187581)
-]
-"""
-
-
-
-
-"""
-Yard test (custom)
-
-
-TARGETS = [
-#(38.94126891,-92.31891656),
-(38.9412354, -92.31887348),
-(38.9412294, -92.31863472) #(38.94121944,-92.31863472)
-]
-"""
-
-
-
-
-
-"""
-TARGETS = [
-(38.94253063, -92.31954402),
-(38.94253776, -92.32057431)
-]
-"""
-=======
 TARGETS = TP.get_targets()
 print(TARGETS)
->>>>>>> simple_organized
 
 current_target_idx = 0
 
@@ -367,12 +275,9 @@ async def nav_task(ws):
                 await asyncio.sleep(1)
                 continue
 
-<<<<<<< HEAD
-=======
             #yaw = oakD_yaw #FOR TESTING ONLY
             #yaw_acc = oakD_yaw_acc #FOR TESTING ONLY
 
->>>>>>> simple_organized
             lat, lon, precision = float(f"{pos['lat']:.10f}"), float(f"{pos['lon']:.10f}"), pos["precision"]
             #lat, lon, precision = pos['lat'], pos['lon'], pos["precision"]
 
@@ -455,11 +360,7 @@ async def nav_task(ws):
             try:
                 
                 await ws.send(command)
-<<<<<<< HEAD
-                csv_logging_task(get_filtered_gps, _get_yaw, TARGET_LAT, TARGET_LON, Xr, Yr, curvature, omega, base_speed, csv_logger)
-=======
                 csv_logging_task(get_filtered_gps, yaw, yaw_acc, None, None, TARGET_LAT, TARGET_LON, Xr, Yr, curvature, omega, base_speed, csv_logger)
->>>>>>> simple_organized
             except Exception as e:
                 print(f"[WEBSOCKET ERROR] Failed to send command: {e}")
                 break  # or continue/reconnect logic
@@ -527,13 +428,9 @@ async def keyboard_task(ws):
             continue
 
         print_data("manual")
-<<<<<<< HEAD
-        csv_logging_task(get_filtered_gps, _get_yaw, 0, 0, 0, 0, 0.0, 0.0, 0.0, csv_logger)
-=======
         yaw = _get_yaw()
         oakD_yaw = None
         csv_logging_task(get_filtered_gps, yaw, _get_yaw_accuracy(imu_reader), oakD_yaw, None, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,csv_logger)
->>>>>>> simple_organized
 
         
         # === Handle direction combinations ===
@@ -559,11 +456,7 @@ async def keyboard_task(ws):
 # ======================
 # CSV Logging task
 # ======================
-<<<<<<< HEAD
-def csv_logging_task(get_pos_func, get_yaw, targ_lat, targ_lon, Xr, Yr, curvature, omega, speed, csv_logger):
-=======
 def csv_logging_task(get_pos_func, yaw_in, yaw_accuracy, oakD_yaw, oakD_yaw_accuracy, targ_lat, targ_lon, Xr, Yr, curvature, omega, speed, csv_logger):
->>>>>>> simple_organized
     try:
         last_timestamp = None
         pos = get_pos_func()
@@ -596,11 +489,7 @@ def csv_logging_task(get_pos_func, yaw_in, yaw_accuracy, oakD_yaw, oakD_yaw_accu
             last_timestamp = UNIX_TIMESTAMP
 
         csv_logger.add_point_main(
-<<<<<<< HEAD
-            timestamp_converted, mode, time_diff, targ_lat, targ_lon, dist, lon, lat, precision, yaw, yaw_acc, speed, bearing, diff, Xr, Yr, curvature, omega
-=======
             timestamp_converted, mode, time_diff, targ_lat, targ_lon, dist, lon, lat, precision, yaw, yaw_acc, oakD_yaw, oakD_yaw_acc, speed, bearing, diff, Xr, Yr, curvature, omega
->>>>>>> simple_organized
         )
 
     except Exception as e:
